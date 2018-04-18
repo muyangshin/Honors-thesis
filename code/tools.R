@@ -7,8 +7,8 @@ library(RSQLite)
 write_ipums_to_sql <- function() {
   # READ IPUMS DATA ---------------------------------------------------------
   
-  cps_ddi_file <- "data/CPS/cps_00004.xml"
-  cps_data_file <- "data/CPS/cps_00004.dat"
+  cps_ddi_file <- "data/CPS/cps_00005.xml"
+  cps_data_file <- "data/CPS/cps_00005.dat"
   
   cps_ddi <- read_ipums_ddi(cps_ddi_file)
   cps_data <- read_ipums_micro(cps_ddi_file, data_file = cps_data_file)
@@ -20,7 +20,7 @@ write_ipums_to_sql <- function() {
   db <- dbConnect(SQLite(), dbname="data_out/cps_data.sqlite")
   
   # export
-  dbWriteTable(db, "cps", cps_data)
+  dbWriteTable(db, "cps", cps_data, overwrite = TRUE)
   
   # disconnect
   dbDisconnect(db)
@@ -39,13 +39,15 @@ load_df <- function() {
   
   # STEM, STEM-related
   occ10 <- read.csv("data/SOC/occ10.csv", stringsAsFactors = F) %>%
-    mutate(is_stem = ifelse(stem %in% 2, TRUE, FALSE),
-           is_stem_related = ifelse(stem %in% c(1, 2), TRUE, FALSE)
+    mutate(is_stem = ifelse(stem %in% 2, 1, 0),
+           is_stem_related = ifelse(stem %in% c(1, 2), 1, 0)
     )
   
   df <- cps_data %>%
     # limit to full-time workers with non-zero salary income
-    filter(FULLPART == 1, INCWAGE != 0) %>%
+    filter(
+      FULLPART == 1, INCWAGE != 0
+      ) %>%
     
     # weight
     group_by(YEAR) %>%
@@ -87,7 +89,8 @@ load_df <- function() {
                     `651` = "Asian",
                     `652` = "Asian",
                     .default = "Other"
-                    )
+                    ),
+      married = ifelse(MARST == 1, 1, 0)
       ) %>%
     
     # occupations: stem, stem-related

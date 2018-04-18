@@ -6,18 +6,26 @@ source("code/tools.R")
 
 # LOAD DATA ---------------------------------------------------------------
 
-df_0 <- load_df()
+# df_0 <- load_df()
 df <- df_0 %>%
-  mutate(cons = 1)
+  mutate(cons = 1) %>%
+  
+  # restrict to men for now
+  filter(SEX == 1) %>%
+  
+  # recalculate weight
+  group_by(YEAR) %>%
+  mutate(weight = weight / sum(weight)) %>%
+  ungroup()
 
 
 # ANALYSIS ----------------------------------------------------------------
 
 years <- c(2002, 2017)
-lwage_thresholds <- seq(min(df$lwage), max(df$lwage), by = 0.2)
+lwage_thresholds <- seq(min(df$lwage), max(df$lwage), by = 2)
 
-tech <- "is_stem"
-xs <- c("schooling", "experience", "experience_sq")
+tech <- "is_stem_related"
+xs <- c("schooling", "experience", "experience_sq", "married")
 
 # construct empty data frame to save regression coefficients
 df_reg <- data.frame(
@@ -52,50 +60,51 @@ for (i in seq_along(years)) {
   }
 }
 
-# estimate cdf
+# empty data frame to store cdfs
 df_cdf <- data.frame(
   year = numeric(length(years) * length(lwage_thresholds)),
   lwage = numeric(length(years) * length(lwage_thresholds)),
   cdf = numeric(length(years) * length(lwage_thresholds)),
-  cdf_tilda = numeric(length(years) * length(lwage_thresholds))
+  cdf_tech = numeric(length(years) * length(lwage_thresholds)),
+  cdf_cont = numeric(length(years) * length(lwage_thresholds))
 )
 
-# vector t0: use t0's tech, use mean for other control variables
-A_0 <- as.matrix(df %>% 
-                   filter(YEAR == years[1]) %>% 
-                   select(cons, !!tech, !!xs)
-                 )
-
-# length of vector t0
-N_0 <- nrow(df %>% 
-              filter(YEAR == years[1])
-            )
-
-# construct counterfactual using A_0
+# construct cdfs
 for (i in seq_along(years)) {
   t <- years[i]
   df_t <- df %>% filter(YEAR == t)
   N_t <- nrow(df_t)
   
+  A_t <- df_t %>% 
+    mutate_at(c("cons", tech, xs), funs(. * weight)) %>%
+    select(cons, !!tech, !!xs) %>% 
+    summarise_all(sum)
+  
+  A_tech <- A_t %>% 
+    mutate(
+      !!tech := t(as.matrix(df[df$YEAR == years[1], tech])) %*% as.matrix(df[df$YEAR == years[1], "weight"])
+      )
+  A_cont <- as.matrix(A_tech)
+  A_cont[3:(2 + length(xs))] <- as.matrix(df %>% 
+                                            filter(YEAR == years[1]) %>%
+                                            mutate_at(xs, funs(. * weight)) %>%
+                                            select(!!xs) %>% 
+                                            summarise_all(funs(sum)))
+  
+  A_t <- as.matrix(A_t)
+  A_tech <- as.matrix(A_tech)
+  A_cont <- as.matrix(A_cont)
+  
   for (j in seq_along(lwage_thresholds)) {
     threshold <- lwage_thresholds[j]
 
-    A_t <- as.matrix(df_t %>% select(cons, !!tech, !!xs))    
     B <- t(as.matrix(df_reg[(i - 1) * length(lwage_thresholds) + j, c("cons", tech, xs)]))
-
-    # for control variables, use mean
-    df_t_mean <- df %>% 
-      filter(YEAR == t) %>%
-      summarise_at(xs, mean)
     
-    for (x in xs) {
-      A_0[, x] <- as.numeric(df_t_mean[1, x])
-    }
-        
-    df_cdf[(i - 1) * length(lwage_thresholds) + j, ] <- c(t, 
-                                                          threshold, 
-                                                          1 / N_t * sum(A_t %*% B),
-                                                          1 / N_0 * sum(A_0 %*% B)
+    df_cdf[(i - 1) * length(lwage_thresholds) + j, ] <- c(t,
+                                                          threshold,
+                                                          A_t %*% B,
+                                                          A_tech %*% B,
+                                                          A_cont %*% B
                                                           )
   }
 }
@@ -105,12 +114,40 @@ df_cdf2 <- df_cdf %>%
   group_by(year) %>%
   mutate(
     d_cdf = cdf - lag(cdf),
-    d_cdf_tilda = cdf_tilda - lag(cdf_tilda)
+    d_cdf_tech = cdf_tech - lag(cdf_tech),
+    d_cdf_cont = cdf_cont - lag(cdf_cont)
     ) %>%
   filter(!is.na(d_cdf)) %>%
   summarise(
     e = sum(lwage * d_cdf),
-    var = sum(lwage^2 * d_cdf) - sum(lwage * d_cdf)^2,
-    var_tilda = sum(lwage^2 * d_cdf_tilda) - sum(lwage * d_cdf_tilda)^2
+    sd = sqrt(sum(lwage^2 * d_cdf) - sum(lwage * d_cdf)^2),
+    sd_tech = sqrt(sum(lwage^2 * d_cdf_tech) - sum(lwage * d_cdf_tech)^2),
+    sd_cont = sqrt(sum(lwage^2 * d_cdf_cont) - sum(lwage * d_cdf_cont)^2)
     )
   
+# results data frame
+df_results <- data.frame(matrix(ncol = 5, nrow = 2))
+colnames(df_results) <- c("name", "total", "tech", "control", "unexplained")
+
+df_results[1, ] <- list("Std Dev", 
+                        df_cdf2[2, "sd"] - df_cdf2[1, "sd"],
+                        df_cdf2[2, "sd"] - df_cdf2[2, "sd_tech"],
+                        df_cdf2[2, "sd_tech"] - df_cdf2[2, "sd_cont"],
+                        df_cdf2[2, "sd_cont"] - df_cdf2[1, "sd"]
+)
+
+df_results[2, ] <- list("pct", 
+                        100,
+                        100 * (df_cdf2[2, "sd"] - df_cdf2[2, "sd_tech"]) / (df_cdf2[2, "sd"] - df_cdf2[1, "sd"]),
+                        100 * (df_cdf2[2, "sd_tech"] - df_cdf2[2, "sd_cont"]) / (df_cdf2[2, "sd"] - df_cdf2[1, "sd"]),
+                        100 * (df_cdf2[2, "sd_cont"] - df_cdf2[1, "sd"]) / (df_cdf2[2, "sd"] - df_cdf2[1, "sd"])
+)
+
+View(df_results)
+
+df_summary <- df %>% 
+  filter(YEAR %in% years) %>%
+  group_by(YEAR) %>%
+  select(weight, !!tech, !!xs) %>%
+  mutate_at(c(tech, xs), funs(. * weight)) %>%
+  summarise_all(sum)

@@ -63,8 +63,7 @@ df_cdf <- data.frame(
 # vector t0: use t0's tech, use mean for other control variables
 A_0 <- as.matrix(df %>% 
                    filter(YEAR == years[1]) %>% 
-                   select(cons, !!tech, !!xs) %>%
-                   mutate_at(xs, mean)
+                   select(cons, !!tech, !!xs)
                  )
 
 # length of vector t0
@@ -83,7 +82,16 @@ for (i in seq_along(years)) {
 
     A_t <- as.matrix(df_t %>% select(cons, !!tech, !!xs))    
     B <- t(as.matrix(df_reg[(i - 1) * length(lwage_thresholds) + j, c("cons", tech, xs)]))
+
+    # for control variables, use mean
+    df_t_mean <- df %>% 
+      filter(YEAR == t) %>%
+      summarise_at(xs, mean)
     
+    for (x in xs) {
+      A_0[, x] <- as.numeric(df_t_mean[1, x])
+    }
+        
     df_cdf[(i - 1) * length(lwage_thresholds) + j, ] <- c(t, 
                                                           threshold, 
                                                           1 / N_t * sum(A_t %*% B),

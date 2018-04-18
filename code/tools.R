@@ -79,6 +79,7 @@ load_df <- function() {
                          `125` = 20
                          ),
       experience = ifelse(AGE - schooling - 6 >= 0, AGE - schooling - 6, 0),
+      experience_sq = experience^2,
       RACE = recode(unclass(RACE),
                     `100` = "White",
                     `200` = "Black",

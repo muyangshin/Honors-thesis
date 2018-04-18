@@ -6,7 +6,7 @@ source("code/tools.R")
 
 # LOAD DATA ---------------------------------------------------------------
 
-# df_0 <- load_df()
+df_0 <- load_df()
 df <- df_0 %>%
   mutate(cons = 1)
 
@@ -17,7 +17,7 @@ years <- c(2002, 2017)
 lwage_thresholds <- seq(min(df$lwage), max(df$lwage), by = 0.2)
 
 tech <- "is_stem"
-xs <- c("schooling", "experience")
+xs <- c("schooling", "experience", "experience_sq")
 
 # construct empty data frame to save regression coefficients
 df_reg <- data.frame(

@@ -90,7 +90,8 @@ load_df <- function() {
                     `652` = "Asian",
                     .default = "Other"
                     ),
-      married = ifelse(MARST == 1, 1, 0)
+      married = ifelse(MARST == 1, 1, 0),
+      METAREA = factor(METAREA)
       ) %>%
     
     # occupations: stem, stem-related

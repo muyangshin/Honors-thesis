@@ -9,8 +9,8 @@ source("code/oes.R")
 write_ipums_to_sql <- function() {
   # READ IPUMS DATA ---------------------------------------------------------
   
-  cps_ddi_file <- "data/CPS/cps_00005.xml"
-  cps_data_file <- "data/CPS/cps_00005.dat"
+  cps_ddi_file <- "data/CPS/cps_00007.xml"
+  cps_data_file <- "data/CPS/cps_00007.dat"
   
   cps_ddi <- read_ipums_ddi(cps_ddi_file)
   cps_data <- read_ipums_micro(cps_ddi_file, data_file = cps_data_file)
@@ -33,11 +33,11 @@ load_df <- function() {
   # CPS March from IPUMS
   cps_data <- sqldf("select * from cps", dbname = "data_out/cps_data.sqlite")
   
-  # GDP Deflators from https://fred.stlouisfed.org/series/GDPDEF
-  gdp_deflator <- read.csv("data/GDPDEF.csv", stringsAsFactors = F) %>%
-    separate(DATE, c("y", "m", "d")) %>%
-    filter(m == "01") %>%
-    column_to_rownames('y')
+  # # GDP Deflators from https://fred.stlouisfed.org/series/GDPDEF
+  # gdp_deflator <- read.csv("data/GDPDEF.csv", stringsAsFactors = F) %>%
+  #   separate(DATE, c("y", "m", "d")) %>%
+  #   filter(m == "01") %>%
+  #   column_to_rownames('y')
   
   # STEM, STEM-related
   occ10 <- read.csv("data/SOC/occ10.csv", stringsAsFactors = F) %>%
@@ -48,7 +48,10 @@ load_df <- function() {
   df <- cps_data %>%
     # limit to full-time workers with non-zero salary income
     filter(
-      FULLPART == 1, INCWAGE != 0
+      FULLPART == 1, INCWAGE != 0, 
+      
+      # keep self-employed + private workers
+      CLASSWLY %in% c(10, 13, 14, 22)
       ) %>%
     
     # weight
@@ -58,7 +61,7 @@ load_df <- function() {
     
     # wage, lwage: inflation-adjusted
     mutate(
-      wage = INCWAGE / WKSWORK1 / UHRSWORKLY * 100 / gdp_deflator[as.character(YEAR), "GDPDEF"],
+      wage = INCWAGE / WKSWORK1 / UHRSWORKLY * CPI99,
       lwage = log(wage)
       ) %>%
     
@@ -133,7 +136,6 @@ prepare_INDLY_conversion_census_to_naics <- function(years, tech_occupations, df
       df <- rbind(df, prepare_INDLY_conversion_census_to_naics(year, tech_occupations, df_oes))
     }
     
-    return(df)
   } else {
     # Single year
     year <- years
@@ -183,7 +185,13 @@ prepare_INDLY_conversion_census_to_naics <- function(years, tech_occupations, df
         summarise(tech.pct.sd = first(tech.pct.sd))
     ) 
     
-    df_conversion <- df_conversion %>%
+    this_year_tech_pct_median <- as.numeric(
+      df_oes %>% 
+        filter(year == !!year) %>%
+        summarise(tech.pct.median = first(tech.pct.median))
+    ) 
+    
+    df <- df_conversion %>%
       # link to oes
       cbind(
         as.data.frame(
@@ -206,14 +214,15 @@ prepare_INDLY_conversion_census_to_naics <- function(years, tech_occupations, df
       
       # create columns for year-specific values
       mutate(
-        year = !!year,
+        YEAR = !!year,
         tech.pct.economy = this_year_tech_pct_economy,
-        tech.pct.sd = this_year_tech_pct_sd
+        tech.pct.sd = this_year_tech_pct_sd,
+        tech.pct.median = this_year_tech_pct_median
         ) %>%
       
       # reorder columns
-      select(year, everything())
-    
-    return(df_conversion)
+      select(YEAR, everything())
   }
+  
+  return(df)
 }  

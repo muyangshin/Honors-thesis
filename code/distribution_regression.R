@@ -6,24 +6,21 @@ source("code/tools.R")
 
 # LOAD DATA ---------------------------------------------------------------
 
-# df_0 <- load_df()
-rm(list = setdiff(ls(), "df_0"))
+df_0 <- load_df()
 
 # start year, end year
-years <- c(2002, 2017)
+years <- c(2002, 2016)
 
+# INDLY to naics
+df_INDLY_naics <- prepare_INDLY_conversion_census_to_naics(years, bls.stem.occupations)
+  
 df <- df_0 %>%
   filter(YEAR %in% years) %>%
   
   mutate(cons = 1) %>%
   
   # restrict to men for now
-  filter(SEX == 1) %>%
-  
-  # recalculate weight
-  group_by(YEAR) %>%
-  mutate(weight = weight / sum(weight)) %>%
-  ungroup()
+  filter(SEX == 1)
 
 # list of METAREAs which appears only once
 METAREAs_appearing_once <- df %>% 
@@ -38,15 +35,26 @@ df <- df %>%
   mutate(METAREA = ifelse(METAREA %in% get("METAREAs_appearing_once"), 10000, METAREA))  %>%
   
   # reset factor levels
-  mutate(METAREA = factor(METAREA))
+  mutate(METAREA = factor(METAREA)) %>%
   
+  # tech using indsutry sector
+  left_join(df_INDLY_naics, by = c("YEAR", "INDLY")) %>%
+  filter(!is.na(tech.pct)) %>%
+  mutate(is_high_tech_ind = ifelse(tech.pct >= tech.pct.economy + tech.pct.sd, 1, 0))
+  
+# recalculate weight
+df <- df %>%
+  group_by(YEAR) %>%
+  mutate(weight = weight / sum(weight)) %>%
+  ungroup()
+
 # ANALYSIS ----------------------------------------------------------------
 
 # set thresholds for lwage: approx from -8 to 8
-lwage_thresholds <- seq(min(df$lwage), max(df$lwage), by = 1.6)
+lwage_thresholds <- seq(min(df$lwage), max(df$lwage), by = 0.8)
 
 # regression specification
-tech <- "is_stem_related"
+tech <- "is_stem"
 xs <- c("schooling", "experience", "experience_sq", "married", "METAREA")
 
 xs_full <- c()  # vector of control variable names, including dummy variables

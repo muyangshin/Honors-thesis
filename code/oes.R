@@ -170,6 +170,7 @@ CompileOES <- function(years, occupations, digits = 4, save = F, convert2002 = F
     df <- df %>%
       mutate(tech.pct = tech / empl, 
              tech.pct.economy = sum(tech) / sum(empl),
+             tech.pct.median = median(tech.pct),
              tech.pct.sd = sd(tech.pct),
              # selected = ifelse(tech.pct >= 2 * tech.pct.economy, 1, 0),
              year = year,

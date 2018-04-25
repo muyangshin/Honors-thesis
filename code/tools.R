@@ -6,11 +6,11 @@ library(RSQLite)
 source("code/oes.R")
 
 # Read IPUMS CPS data and write to SQLite
-write_ipums_to_sql <- function() {
+write_cps_aces_to_sql <- function() {
   # READ IPUMS DATA ---------------------------------------------------------
   
-  cps_ddi_file <- "data/CPS/cps_00007.xml"
-  cps_data_file <- "data/CPS/cps_00007.dat"
+  cps_ddi_file <- "data/CPS/cps_aces.xml"
+  cps_data_file <- "data/CPS/cps_aces.dat"
   
   cps_ddi <- read_ipums_ddi(cps_ddi_file)
   cps_data <- read_ipums_micro(cps_ddi_file, data_file = cps_data_file)
@@ -19,7 +19,29 @@ write_ipums_to_sql <- function() {
   # SQLite ------------------------------------------------------------------
   
   # connection
-  db <- dbConnect(SQLite(), dbname="data_out/cps_data.sqlite")
+  db <- dbConnect(SQLite(), dbname="data_out/cps_aces.sqlite")
+  
+  # export
+  dbWriteTable(db, "cps", cps_data, overwrite = TRUE)
+  
+  # disconnect
+  dbDisconnect(db)
+}
+
+write_cps_org_to_sql <- function() {
+  # READ IPUMS DATA ---------------------------------------------------------
+  
+  cps_ddi_file <- "data/CPS/cps_org.xml"
+  cps_data_file <- "data/CPS/cps_org.dat"
+  
+  cps_ddi <- read_ipums_ddi(cps_ddi_file)
+  cps_data <- read_ipums_micro(cps_ddi_file, data_file = cps_data_file)
+  
+  
+  # SQLite ------------------------------------------------------------------
+  
+  # connection
+  db <- dbConnect(SQLite(), dbname="data_out/cps_org.sqlite")
   
   # export
   dbWriteTable(db, "cps", cps_data, overwrite = TRUE)
@@ -29,14 +51,14 @@ write_ipums_to_sql <- function() {
 }
 
 # Read CPS March data and construct the main dataset
-load_df <- function() {
+load_df_aces <- function() {
   # CPS March from IPUMS
-  cps_data <- sqldf("select * from cps", dbname = "data_out/cps_data.sqlite")
+  cps_data <- sqldf("select * from cps", dbname = paste0("data_out/cps_aces.sqlite"))
   
   # # GDP Deflators from https://fred.stlouisfed.org/series/GDPDEF
   # gdp_deflator <- read.csv("data/GDPDEF.csv", stringsAsFactors = F) %>%
   #   separate(DATE, c("y", "m", "d")) %>%
-  #   filter(m == "01") %>%
+  #   filter(d == "01") %>%
   #   column_to_rownames('y')
   
   # STEM, STEM-related
@@ -105,9 +127,88 @@ load_df <- function() {
   return(df)
 }
 
+# Read CPS March data and construct the main dataset
+load_df_org <- function() {
+  # CPS March from IPUMS
+  cps_data <- sqldf("select * from cps", dbname = paste0("data_out/cps_org.sqlite"))
+  
+  # GDP Deflators from https://fred.stlouisfed.org/series/GDPDEF
+  gdp_deflator <- read.csv("data/GDPDEF.csv", stringsAsFactors = F) %>%
+    separate(DATE, c("y", "m", "d")) %>%
+    filter(m == "01") %>%
+    column_to_rownames("y")
+  
+  # STEM, STEM-related
+  occ10 <- read.csv("data/SOC/occ10.csv", stringsAsFactors = F) %>%
+    mutate(is_stem = ifelse(stem %in% 2, 1, 0),
+           is_stem_related = ifelse(stem %in% c(1, 2), 1, 0)
+    ) %>%
+    rename(OCC2010 = OCC10LY)
+  
+  df <- cps_data %>%
+    # limit to full-time workers with non-zero salary income
+    filter(
+      HOURWAGE != 99.99, HOURWAGE > 0, EARNWT != 0, UHRSWORKORG != 999,
+      
+      # keep self-employed + private workers
+      CLASSWKR %in% c(10, 13, 14, 22)
+    ) %>%
+    
+    # weight
+    mutate(weight = EARNWT * UHRSWORKORG) %>%
+    group_by(YEAR) %>%
+    mutate(weight = weight / sum(weight)) %>%
+    ungroup() %>%
+    
+    # wage, lwage: inflation-adjusted
+    mutate(
+      wage = HOURWAGE * 100 / gdp_deflator[as.character(YEAR), "GDPDEF"],
+      lwage = log(wage)
+    ) %>%
+    
+    # schooling
+    mutate(
+      schooling = recode(unclass(EDUC),
+                         `2` = 0,
+                         `10` = 2,
+                         `20` = 5.5,
+                         `30` = 7.5,
+                         `40` = 9,
+                         `50` = 10,
+                         `60` = 11,
+                         `71` = 11.5,
+                         `73` = 12,
+                         `81` = 13,
+                         `91` = 14,
+                         `92` = 14,
+                         `111` = 16,
+                         `123` = 18,
+                         `124` = 18,
+                         `125` = 20
+      ),
+      experience = ifelse(AGE - schooling - 6 >= 0, AGE - schooling - 6, 0),
+      experience_sq = experience^2,
+      RACE = recode(unclass(RACE),
+                    `100` = "White",
+                    `200` = "Black",
+                    `300` = "American Indian",
+                    `651` = "Asian",
+                    `652` = "Asian",
+                    .default = "Other"
+      ),
+      married = ifelse(MARST == 1, 1, 0),
+      METAREA = factor(METAREA)
+    ) %>%
+    
+    # occupations: stem, stem-related
+    left_join(occ10 %>% select(OCC2010, is_stem, is_stem_related), by = "OCC2010")
+  
+  return(df)
+}
+
 # create mapping from INDLY to OES industry codes,
 # and calculate economy average and sd using the given set of occupations
-prepare_INDLY_conversion_census_to_naics <- function(years, tech_occupations, df_oes = NULL) {
+prepare_INDLY_conversion_census_to_naics <- function(years, tech_occupations, df_oes = NULL, cached = F, save = F) {
   # fetch empl, tech from oes using the census_code
   fetch_oes_empl_tech <- function(census_code, df) {
     # census_code: number
@@ -123,6 +224,11 @@ prepare_INDLY_conversion_census_to_naics <- function(years, tech_occupations, df
     ))
   }
   
+  # use cached?
+  if (cached) {
+    return(read.csv("data_out/INDLY_to_naics.csv", stringsAsFactors = F, fileEncoding = "UTF-8"))  
+  }
+  
   # construct df_oes only once
   if (is.null(df_oes)) {
     df_oes <- CompileOES(years, tech_occupations)
@@ -135,7 +241,11 @@ prepare_INDLY_conversion_census_to_naics <- function(years, tech_occupations, df
     for (year in tail(years, -1)) {
       df <- rbind(df, prepare_INDLY_conversion_census_to_naics(year, tech_occupations, df_oes))
     }
-    
+  
+    # save?
+    if (save) {
+      write.csv(df, "data_out/INDLY_to_naics.csv", fileEncoding = "UTF-8")
+    }
   } else {
     # Single year
     year <- years

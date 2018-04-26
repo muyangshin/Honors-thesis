@@ -1,5 +1,6 @@
 library(tidyverse)
 library(sqldf)  # SQL
+library(Emcdf)
 
 source("code/tools.R")
 
@@ -52,7 +53,7 @@ df <- df %>%
 
 # set thresholds for lwage: approx from -8 to 8
 # lwage_thresholds <- seq(min(df$lwage), max(df$lwage), by = 0.8)
-lwage_thresholds <- quantile(df$lwage, seq(0.02, 0.98, by = 0.001))[-1]
+lwage_thresholds <- quantile(df$lwage, seq(0.02, 0.98, by = 0.001))
 
 # regression specification
 tech <- "is_stem"
@@ -160,8 +161,6 @@ f_c1 <- construct_empirical_pdf(
 )
 
 # # F_X0, F_X1, F_C1
-# cov_distributions <- vector("list", length = 3)
-# 
 # # TODO: automated
 # a <- as.matrix(expand.grid(
 #   c(0, 1),
@@ -169,6 +168,14 @@ f_c1 <- construct_empirical_pdf(
 #   quantile(df$experience, seq(0, 1, by = quantile_interval))[-1],
 #   quantile(df$experience_sq, seq(0, 1, by = quantile_interval))[-1],
 #   c(0, 1)
+# ))
+# 
+# a_min <- as.matrix(expand.grid(
+#   c(-1, 0),
+#   c(-Inf, quantile(df$schooling, seq(0, 1, by = quantile_interval))[-c(1, 1 / quantile_interval + 1)]),
+#   c(-Inf, quantile(df$experience, seq(0, 1, by = quantile_interval))[-c(1, 1 / quantile_interval + 1)]),
+#   c(-Inf, quantile(df$experience_sq, seq(0, 1, by = quantile_interval))[-c(1, 1 / quantile_interval + 1)]),
+#   c(-1, 0)
 # ))
 # 
 # # without tech
@@ -179,21 +186,36 @@ f_c1 <- construct_empirical_pdf(
 #   c(0, 1)
 # ))
 # 
+# a_C_min <- as.matrix(expand.grid(
+#   c(-Inf, quantile(df$schooling, seq(0, 1, by = quantile_interval))[-c(1, 1 / quantile_interval + 1)]),
+#   c(-Inf, quantile(df$experience, seq(0, 1, by = quantile_interval))[-c(1, 1 / quantile_interval + 1)]),
+#   c(-Inf, quantile(df$experience_sq, seq(0, 1, by = quantile_interval))[-c(1, 1 / quantile_interval + 1)]),
+#   c(-1, 0)
+# ))
+# 
+# df_t1 <- df %>%
+#   filter(YEAR == years[1]) %>%
+#   select(!!tech, !!xs_full)
+# 
+# obj <- initF(as.matrix(df_t1), 2)
+# 
+# f_x0 <- emcdf(obj, a) - emcdf(obj, a_min)
+# 
 # # X0, X1
 # for (i in seq_along(years)) {
 #   t <- years[i]
-#   df_t <- df %>% 
+#   df_t <- df %>%
 #     filter(YEAR == t) %>%
 #     select(!!tech, !!xs_full)
-#   
+# 
 #   obj <- initF(as.matrix(df_t), 2)
-#   
+# 
 #   cov_distributions[[i]] <- emcdf(obj, a)
 # }
 # 
 # # C1
 # t <- years[2]
-# df_t <- df %>% 
+# df_t <- df %>%
 #   filter(YEAR == t) %>%
 #   select(!!xs_full)
 # obj <- initF(as.matrix(df_t), 2)
@@ -245,7 +267,7 @@ df_cdf <- data.frame(
 
 df_cdf$year <- years[2]
 df_cdf$lwage <- lwage_thresholds
-df_cdf$cdf <- seq(0.02, 0.98, by = 0.96 / length(lwage_thresholds))[-1]
+df_cdf$cdf <- seq(0.02, 0.98, by = 0.96 / (length(lwage_thresholds) - 1))
 
 # fitted values of logistic regression
 reg_u0_c0_fitted <- f_x0[, -c(2, ncol(f_x0))] %*% reg_u0_c0$coefficients
@@ -301,7 +323,8 @@ for (i in 1:nrow(df_reg)) {
 #   }
 # }
 
-# calculate variance
+# calculate variance ------------------------------------------------------
+
 df_cdf <- df_cdf %>%
   mutate(
     d_cdf = cdf - lag(cdf),

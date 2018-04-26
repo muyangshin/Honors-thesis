@@ -1,0 +1,81 @@
+---
+title: "TITLE??"
+# subtitle: "Econ 191 Final Paper"
+author: "Mu Yang Shin"
+output: 
+  pdf_document:
+    latex_engine: pdflatex
+    number_sections: true
+bibliography: paper.bib
+documentclass: article
+linestretch: 2
+geometry: margin=1in
+fontsize: 12pt
+header-includes:
+   - \usepackage{color, soul}
+   - \usepackage{indentfirst}
+   - \usepackage{mathptmx}
+   - \setlength{\parindent}{2em}
+   - \setlength{\parskip}{0em}
+---
+<!-- nocite: |  -->
+<!--   @piketty_distributional_2016 -->
+```{r setup, include=FALSE, cache = FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache = TRUE, warning = FALSE, message = FALSE)
+
+
+```
+
+\bigskip
+
+\begin{center}
+\textbf{ABSTRACT}
+\end{center}
+
+\begingroup\setlength{\parindent}{0em}
+<!-- \setlength{\leftskip}{4em} -->
+This paper took an occupation-oriented approach to identify technology industry and analyze its relationship with the rising wage inequality at the industry level in the United States since 2002. By constructing a measure of technology use in each industry sector from occupation data, this paper finds that technology use is a relevant factor in determining a sector's average wage. Furthermore, this paper finds that technology use is unevenly distributed among sectors, and there have been substantial differences in the growth of wage and the share of technology and college-educated workers between the top 10% and bottom 50% wage groups.
+\endgroup
+
+\newpage
+# Introduction
+<!-- (1) motivate your research question,  -->
+<!-- (2) clearly state the question,  -->
+<!-- (3) briefly outline how you will endeavor to answer the question,  -->
+<!-- (4) present your key results, and  -->
+<!-- (5) give a roadmap of the rest of the paper -->
+
+<!-- Lit Review -->
+<!-- What is known -->
+<!-- What types of methods have people used -->
+
+# Data
+<!-- WAGE -->
+<!-- FIG: Wage inequality: ACES and ORG - use Std, 90-10s, Gini (consistent set) -->
+
+<!-- TECH -->
+<!-- OCCUPATION APPROACH -->
+<!-- TABLE: 4 Definitions of tech occupations - maybe appendix? -->
+
+<!-- FIG: Share of tech workers over time: ACES and ORG -->
+
+<!-- INDUSTRY APPROACH -->
+<!-- TABLE: High-tech and low-tech industry sectors -->
+
+<!-- FIG: Number of workers in high-tech and low-tech industry sectors: weighted mean/dichotomous from QCEW -->
+
+<!-- FIG: High-tech Share of wage/salary: weighted mean/dichotomous from QCEW  -->
+
+<!-- FIG: Share of tech industry workers over time: weighted mean/dichotomous ACES and ORG -->
+
+# Method
+
+# Results
+
+# Twist (Women?)
+
+# Conclusion
+<!-- 1 Paragraph + Future Research -->
+
+
+# Bibliography

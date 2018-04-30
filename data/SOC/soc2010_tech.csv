@@ -1,0 +1,52 @@
+tech_type,SOC,Title
+STEM,11-3020,Computer and Information Systems Managers
+STEM,11-9040,Architectural and Engineering Managers
+STEM,11-9120,Natural Sciences Managers
+STEM,15-0000,Computer and Mathematical Occupations
+STEM,17-1020,"Surveyors, Cartographers, and Photogrammetrists "
+STEM,17-2000,Engineers
+STEM,17-3000,"Drafters, Engineering Technicians, and Mapping Technicians"
+STEM,19-1000,Life Scientists
+STEM,19-2000,Physical Scientists 
+STEM,19-3010,Economists
+STEM,19-3022,Survey Researchers
+STEM,19-3030,Psychologists 
+STEM,19-3040,Sociologists
+STEM,19-3050,Urban and Regional Planners
+STEM,19-3090,Miscellaneous Social Scientists and Related Workers 
+STEM,19-4000,"Life, Physical, and Social Science Technicians "
+STEM,41-9031,Sales Engineers
+STEM Related,11-3020,Computer and Information Systems Managers
+STEM Related,11-9040,Architectural and Engineering Managers
+STEM Related,11-9110,Medical and Health Services Managers 
+STEM Related,11-9120,Natural Sciences Managers
+STEM Related,15-0000,Computer and Mathematical Occupations
+STEM Related,17-0000,Architecture and Engineering Occupations
+STEM Related,19-1000,Life Scientists
+STEM Related,19-2000,Physical Scientists 
+STEM Related,19-3010,Economists
+STEM Related,19-3022,Survey Researchers
+STEM Related,19-3030,Psychologists 
+STEM Related,19-3040,Sociologists
+STEM Related,19-3050,Urban and Regional Planners
+STEM Related,19-3090,Miscellaneous Social Scientists and Related Workers 
+STEM Related,19-4000,"Life, Physical, and Social Science Technicians "
+STEM Related,29-0000,Healthcare Practitioners and Technical Occupations
+STEM Related,41-9031,Sales Engineers
+High Tech,11-3020,Computer and Information Systems Managers 
+High Tech,11-9040,Architectural and Engineering Managers 
+High Tech,11-9120,Natural Sciences Managers 
+High Tech,15-0000,Computer and Mathematical Occupations
+High Tech,17-2000,Engineers 
+High Tech,17-3000,"Drafters, Engineering Technicians, and Mapping Technicians "
+High Tech,19-1000,Life Scientists 
+High Tech,19-2000,Physical Scientists
+High Tech,19-4000,"Life, Physical, and Social Science Technicians"
+High Tech,27-1014,Multimedia Artists and Animators
+High Tech,29-2011,Medical and Clinical Laboratory Technologists 
+High Tech,29-2033,Nuclear Medicine Technologists
+High Tech,29-2034,Radiologic Technologists
+Tech Group,15-0000,Computer and Mathematical Occupations
+Tech Group,17-0000,Architecture and Engineering Occupations
+Tech Group,19-0000,"Life, Physical, and Social Science Occupations"
+Tech Group,29-0000,Healthcare Practitioners and Technical Occupations

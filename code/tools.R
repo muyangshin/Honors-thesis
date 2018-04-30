@@ -70,24 +70,18 @@ load_df_aces <- function(query = NULL) {
     # minimum wage: drop if lower than minimum wage
     left_join(df_minwage, by = "YEAR") %>%
     
-    # nominal wage: yearly wage and salary in come divided by number of hours worked
-    mutate(wage_nominal = INCWAGE / WKSWORK1 / UHRSWORKLY) %>%
-
-    # wage, lwage: inflation-adjusted
     mutate(
+      # nominal wage: yearly wage and salary in come divided by number of hours worked
+      wage_nominal = INCWAGE / WKSWORK1 / UHRSWORKLY,
+
+      # wage, lwage: inflation-adjusted
       gdp_def = gdp_deflator[as.character(YEAR), "GDPDEF"],
       wage = wage_nominal * 100 / gdp_def,
       lwage = log(wage)
       ) %>%
     
-    # keep wage between $1 and $350 (in 2009 dollar)
-    filter(wage >= 1, wage <= 350) %>%
-    
     # weight: cps weight multiplied by number of hours worked
     mutate(weight = ASECWT * WKSWORK1 * UHRSWORKLY) %>%
-    group_by(YEAR) %>%
-    mutate(weight = weight / sum(weight)) %>%
-    ungroup() %>%
 
     # schooling
     mutate(
@@ -109,10 +103,29 @@ load_df_aces <- function(query = NULL) {
                          `124` = 18,
                          `125` = 20
                          ),
+      
+      # 5 education groups: below_hs, hs, college_some, college, graduate
+      schooling_group = ifelse(schooling < 12, "below_hs",
+                               ifelse(schooling == 12, "hs",
+                                      ifelse(schooling < 16, "college_some", "college"))),
+                                             # ifelse(schooling == 16, "college", "graduate")))),
+      college = ifelse(schooling > 12, 1, 0),
+      # college = factor(college, labels("HS", "College")),
+      
+      # experience, quartic
       experience = ifelse(AGE - schooling - 5 >= 0, AGE - schooling - 5, 0),
       experience_2 = experience^2,
       experience_3 = experience^3,
       experience_4 = experience^4,
+      
+      # 4 experience groups: 0-9, 10-19, 20-29, 30+
+      experience_group = ifelse(experience < 10, "experience9",
+                                ifelse(experience < 20, "experience19",
+                                       ifelse(experience < 30, "experience29", "experience30"))),
+      
+      # 20 education-experience groups
+      educ_exp_group = paste(schooling_group, experience_group, sep = "_"),
+      educ_exp_group = factor(educ_exp_group),
       
       # Race
       RACE = recode(unclass(RACE),
@@ -128,8 +141,16 @@ load_df_aces <- function(query = NULL) {
       # metropolitan area
       METAREA = factor(METAREA)
       ) %>%
+    
+    # additional restriction: wage between $1 and $350 (in 2009 dollar)
+    filter(wage >= 1, wage <= 350) %>%
+    
+    # normalize weight
+    group_by(YEAR) %>%
+    mutate(weight = weight / sum(weight)) %>%
+    ungroup() %>%
 
-    # occupations: stem, stem-related
+    # occupations: stem, stem_related, high_tech, tech_group
     left_join(occ10_tech %>% 
                 dplyr::select(OCC10LY, stem, stem_related, high_tech, tech_group),
               by = "OCC10LY") %>%

@@ -26,8 +26,13 @@ header-includes:
 ```{r setup, include=FALSE, cache = FALSE}
 knitr::opts_chunk$set(echo = FALSE, cache = FALSE, warning = FALSE, message = FALSE)
 
-
 ```
+
+\newcommand{\inputtable}[1]{
+  \begingroup\setstretch{1.0}
+  \input{#1}
+  \endgroup
+}
 
 \bigskip
 
@@ -67,9 +72,11 @@ Table \ref{tab:tab_top_bottom_tech_ind} lists industry sectors which had the hig
 [^high-tech-occupations]: @kilcoyne_high-tech_2001
 
 <!-- TABLE: High-tech and low-tech industry sectors -->
-\begingroup\setstretch{1.0}
-\input{tex/top_bottom_tech_ind_manual.tex}
-\endgroup
+<!-- \begingroup\setstretch{1.0} -->
+<!-- \input{tex/top_bottom_tech_ind_manual.tex} -->
+<!-- \endgroup -->
+
+\inputtable{tex/top_bottom_tech_ind_manual.tex}
 
 To test the robustness, this paper uses three alternative sets of occupations. First, "*technology group* occupations" focuses relatively more on major occupation groups in which the use of technology is prevalent. Instead of specific occupations, this method uses four major occupation groups: Computer and Mathematical Occupations (15-0000), Architecture and Engineering Occupations (17-0000), Life, Physical, and Social Science Occupations (19-0000), Healthcare Practitioners and Technical Occupations (29-0000). Although some of the occupations included in these major groups might not directly make use of high technology, this method is expected to capture potential spillover effects of high-technology workers on other workers whose functions are closely related.
 

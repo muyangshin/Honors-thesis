@@ -246,3 +246,53 @@ plot_grid(plot.top.bottom.wage, plot.top.bottom.tech, ncol = 2, align = "v")
 
 ggsave("png/industry_trends_by_year_group.png", height = 4)
 
+
+
+# miscs -----------------------------------------------------------------
+
+# compare observed vs tech cdfs
+df_cdf_tech_only %>% 
+  dplyr::select(lwage, cdf, cdf_tech) %>% 
+  gather("name", "value", 2:3) %>% 
+  ggplot(aes(lwage, value, color = name)) +
+  geom_line()
+
+# mean wage: tech vs non-tech occupations
+df_aces %>%
+  filter(SEX == 1) %>%
+  mutate(college = schooling > 12) %>%
+  group_by(YEAR, college) %>%
+  summarise(mean_lwage = weighted.mean(lwage, weight)) %>%
+  group_by(YEAR) %>%
+  summarise(mean_diff = last(mean_lwage) - first(mean_lwage)) %>%
+  mutate(name = "College/HS") %>%
+  bind_rows(df_aces %>%
+              filter(SEX == 1) %>%
+              mutate(college = schooling > 12) %>%
+              group_by(YEAR, high_tech) %>%
+              summarise(mean_lwage = weighted.mean(lwage, weight)) %>%
+              group_by(YEAR) %>%
+              summarise(mean_diff = last(mean_lwage) - first(mean_lwage)) %>%
+              mutate(name = "Tech/Non-tech")) %>%
+  ggplot(aes(YEAR, mean_diff, color = name)) +
+  geom_line()
+
+# tech gap is mostly from the educated
+df_aces %>%
+  filter(SEX == 1, schooling > 12) %>%
+  group_by(YEAR, high_tech) %>%
+  summarise(mean_lwage = weighted.mean(lwage, weight)) %>%
+  group_by(YEAR) %>%
+  summarise(mean_diff = last(mean_lwage) - first(mean_lwage)) %>%
+  ggplot(aes(YEAR, mean_diff)) +
+  geom_line()
+
+df_aces %>%
+  filter(SEX == 1) %>%
+  mutate(tech_educ_group = ifelse(schooling <= 12, ifelse(high_tech == 1, "HS-Tech", "HS-NonTech"),
+                                  ifelse(high_tech == 1, "College-Tech", "College-Nontech")),
+         tech_educ_group = factor(tech_educ_group)) %>%
+  group_by(YEAR, tech_educ_group) %>%
+  summarise(mean_wage = weighted.mean(wage, weight)) %>%
+  ggplot(aes(YEAR, mean_wage, color = tech_educ_group)) +
+  geom_line()

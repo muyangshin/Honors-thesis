@@ -18,7 +18,7 @@ as.data.frame(wtd.Ecdf(df_t1()$lwage, df_t1()$weight)) %>%
   mutate(year = years[1]) %>%
   bind_rows(as.data.frame(wtd.Ecdf(df_t2()$lwage, df_t2()$weight)) %>%
               mutate(year = years[2])) %>%
-  bind_rows(df_cdf_tech_only %>% dplyr::select(x = lwage, ecdf = cdf_tech) %>% mutate(year = 0)) %>%
+  bind_rows(df_cdf %>% dplyr::select(x = lwage, ecdf = cdf_tech) %>% mutate(year = 0)) %>%
   mutate(year = factor(year)) %>%
   ggplot(aes(x, ecdf, color = year)) +
   geom_line()
@@ -302,13 +302,37 @@ df_aces %>%
 ggplot(df_t1(), aes(x = lwage, color = high_tech)) + geom_histogram(alpha = .3)
 ggplot(df_t2(), aes(x = lwage, color = high_tech)) + geom_density()
 
-sum(df_t2_tech$lwage < threshold) / nrow(df_t2_tech)
-sum(df_t2_nontech$lwage < threshold) / nrow(df_t2_nontech)
+# by wage group
+df_by_wage_group <- df_aces %>%
+  group_by(YEAR) %>%
+  mutate(rank = rank(lwage),
+         n = n()) %>%
+  mutate(group = ifelse(rank > n - n / 10, "Top 10%", 
+                        ifelse(rank <= n / 2, "Bottom 50%", "Middle 40%"))) %>%
+  group_by(YEAR, group) %>%
+  summarise(wage = mean(wage), high_tech = mean(high_tech))
 
-j <- 50
-threshold <- lwage_thresholds[j]
+# plot
+theme_set(theme_cowplot(font_size = 10)) # reduce default font size
 
-y <- ifelse(df_t2()$lwage <= threshold, 1, 0)
+plot.top.bottom.wage <- ggplot(df_by_wage_group, aes(x = YEAR, y = wage, colour = group, shape = group)) +
+  geom_line() +
+  geom_point(size = 3) +
+  xlab("Year") +
+  ylab("Average Wage") +
+  scale_x_continuous(limits = c(1992, 2017), breaks = seq(1992, 2017, by = 2)) +
+  scale_y_continuous(limits = c(0, 80), breaks = seq(0, 80, by = 10), expand = c(0, 0)) +
+  theme(legend.title = element_blank(), panel.grid.major = element_line(colour = "grey"), legend.position = "bottom")
 
-# linear
-reg <- lm(y ~ high_tech, data = df_t2(), weights = weight)
+plot.top.bottom.tech <- ggplot(df_by_wage_group, aes(x = YEAR, y = high_tech, colour = group, shape = group)) +
+  geom_line() +
+  geom_point(size = 3) +
+  xlab("Year") +
+  ylab("Share of Technology Workers") +
+  scale_x_continuous(limits = c(1992, 2017), breaks = seq(1992, 2017, by = 2)) +
+  scale_y_continuous(limits = c(0, 0.3), breaks = seq(0, 0.3, by = 0.05), expand = c(0, 0)) +
+  theme(legend.title = element_blank(), panel.grid.major = element_line(colour = "grey"), legend.position = "bottom")
+
+plot_grid(plot.top.bottom.wage, plot.top.bottom.tech, ncol = 2, align = "v")
+
+ggsave("png/wage_tech_trends_by_wage_group.png", height = 4)

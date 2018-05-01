@@ -15,7 +15,7 @@ source("code/tools.R")
 # df_org <- load_df_org("cps_org")
 
 # start year, end year
-years <- c(2017, 1992)
+years <- c(1992, 2017)
 
 # read data from sql
 df <- load_df_aces(paste0("YEAR = ", years[1], " or YEAR = ", years[2]))
@@ -30,12 +30,8 @@ df <- df %>%
   filter(SEX == 1)
 
 # create views for period 1 and 2
-df_t1 <- function() {
-  return(df %>% filter(YEAR == years[1]))
-}
-
-df_t2 <- function() {
-  return(df %>% filter(YEAR == years[2]))
+df_t <- function(t) {
+  return(df %>% filter(YEAR == years[t]))
 }
 
 # list of METAREAs which appears only once
@@ -71,7 +67,7 @@ df <- df %>%
 quantile_interval <- 0.01
 
 # set thresholds for lwage
-lwage_thresholds <- wtd.quantile(df_t2()$lwage, df_t2()$weight, seq(0, 1, by = quantile_interval), normwt = T)
+lwage_thresholds <- wtd.quantile(df_t(2)$lwage, df_t(2)$weight, seq(0, 1, by = quantile_interval), normwt = T)
 
 df <- df %>%
   mutate(
@@ -107,14 +103,14 @@ df_reg_tech_only <- data.frame(matrix(ncol = 3 + length(tech_full),
 for (j in seq_along(lwage_thresholds)) {
   threshold <- lwage_thresholds[j]
 
-  y <- ifelse(df_t2()$lwage <= threshold, 1, 0)
+  y <- ifelse(df_t(2)$lwage <= threshold, 1, 0)
   reg_formula <- paste0("y ~ ", paste0(tech_full, collapse = " + "))
 
-  # linear
-  reg <- lm(reg_formula, data = df_t2(), weights = weight)
+  # # linear
+  # reg <- lm(reg_formula, data = df_t(2), weights = weight)
 
-  # # logistic
-  # reg <- glm(reg_formula, data = df_t2(), family = "binomial", weights = weight)
+  # logistic
+  reg <- glm(reg_formula, data = df_t(2), family = "binomial", weights = weight)
 
   df_reg_tech_only[j, ] <- c(years[2], threshold, reg$coefficients)
 }
@@ -138,13 +134,13 @@ df_cdf_tech_only$cdf <- seq(0, 1, by = quantile_interval)
 
 # covariate distributions
 # cdf_tech
-covariates <- as.matrix(df_t1() %>% dplyr::select(cons, !!tech_full))
+covariates <- as.matrix(df_t(1) %>% dplyr::select(cons, !!tech_full))
 
-# linear
-df_cdf_tech_only$cdf_tech <- colMeans(covariates %*% t(as.matrix(df_reg_tech_only[, c("cons", tech_full)])))
+# # linear
+# df_cdf_tech_only$cdf_tech <- colMeans(covariates %*% t(as.matrix(df_reg_tech_only[, c("cons", tech_full)])))
 
-# # logistic
-# df_cdf_tech_only$cdf_tech <- colMeans(logistic(covariates %*% t(as.matrix(df_reg_tech_only[, c("cons", tech_full)]))))
+# logistic
+df_cdf_tech_only$cdf_tech <- colMeans(logistic(covariates %*% t(as.matrix(df_reg_tech_only[, c("cons", tech_full)]))))
 
 if (is.nan(df_cdf_tech_only$cdf_tech[length(df_cdf_tech_only$cdf_tech)])) {
   df_cdf_tech_only$cdf_Tech[length(df_cdf_tech_only$cdf_tech)] <- 1
@@ -165,11 +161,11 @@ sd_empr <- sqrt(sum(df_cdf_tech_only$lwage^2 * df_cdf_tech_only$d_cdf) / sum(df_
 avg_tech <- sum(df_cdf_tech_only$lwage * df_cdf_tech_only$d_cdf_tech) / sum(df_cdf_tech_only$d_cdf_tech)
 sd_tech <- sqrt(sum(df_cdf_tech_only$lwage^2 * df_cdf_tech_only$d_cdf_tech) / sum(df_cdf_tech_only$d_cdf_tech) - avg_tech^2)
 
-lwage_t1_mean <- wtd.mean(df_t1()$lwage, df_t1()$weight)
-lwage_t1_sd <- sqrt(wtd.var(df_t1()$lwage, df_t1()$weight, normwt = T))
+lwage_t1_mean <- wtd.mean(df_t(1)$lwage, df_t(1)$weight)
+lwage_t1_sd <- sqrt(wtd.var(df_t(1)$lwage, df_t(1)$weight, normwt = T))
 
-lwage_t2_mean <- wtd.mean(df_t2()$lwage, df_t2()$weight)
-lwage_t2_sd <- sqrt(wtd.var(df_t2()$lwage, df_t2()$weight, normwt = T))
+lwage_t2_mean <- wtd.mean(df_t(2)$lwage, df_t(2)$weight)
+lwage_t2_sd <- sqrt(wtd.var(df_t(2)$lwage, df_t(2)$weight, normwt = T))
 
 
 # results data frame
@@ -198,7 +194,7 @@ View(df_decompose_tech_only)
 quantile_interval <- 0.001
 
 # set thresholds for lwage
-lwage_thresholds <- wtd.quantile(df_t2()$lwage, df_t2()$weight, seq(0, 1, by = quantile_interval), normwt = T)
+lwage_thresholds <- wtd.quantile(df_t(2)$lwage, df_t(2)$weight, seq(0, 1, by = quantile_interval), normwt = T)
 
 df <- df %>%
   mutate(
@@ -262,14 +258,14 @@ df_reg <- data.frame(matrix(ncol = 3 + length(tech_full) + length(xs_full),
 for (j in seq_along(lwage_thresholds)) {
   threshold <- lwage_thresholds[j]
   
-  y <- ifelse(df_t2()$lwage <= threshold, 1, 0)
+  y <- ifelse(df_t(2)$lwage <= threshold, 1, 0)
   reg_formula <- paste0("y ~ ", paste0(c(tech_full, xs_full), collapse = " + "))
   
   # # linear
-  # reg <- lm(reg_formula, data = df_t2(), weights = weight)
+  # reg <- lm(reg_formula, data = df_t(2), weights = weight)
   
   # logistic
-  reg <- glm(reg_formula, data = df_t2(), family = "binomial", weights = weight)
+  reg <- glm(reg_formula, data = df_t(2), family = "binomial", weights = weight)
   
   df_reg[j, ] <- c(years[2], threshold, reg$coefficients)
 }
@@ -281,13 +277,13 @@ reg_formula <- paste0(tech, " ~ ", paste0(xs_full, collapse = " + "))
 
 # binomial
 reg_u0_c0 <- glm(reg_formula,
-                 data = df_t1(),
+                 data = df_t(1),
                  family = "binomial",
                  weights = weight)
 
 # # multinomial
 # reg_u0_c0 <- multinom(reg_formula, 
-#                       data = df_t1(),
+#                       data = df_t(1),
 #                       weights = weight)
 
 # * Construct distributions ---------------------------------------
@@ -317,21 +313,21 @@ df_cdf$cdf <- seq(0, 1, by = quantile_interval)
 # *** cdf_tech: Pr_0(tech | c_1) ------------------------------------------
 
 # binomial
-prob_tech <- logistic(predict(reg_u0_c0, df_t2() %>% dplyr::select(cons, !!xs_full)))
+prob_tech <- logistic(predict(reg_u0_c0, df_t(2) %>% dplyr::select(cons, !!xs_full)))
 
 # # multinomial
 # prob_tech <- rowSums(
-#   predict(reg_u0_c0, df_t2() %>% dplyr::select(cons, !!xs_full), "probs") *
-#     as.matrix(df_t2() %>% dplyr::select(!!tech_full2))
+#   predict(reg_u0_c0, df_t(2) %>% dplyr::select(cons, !!xs_full), "probs") *
+#     as.matrix(df_t(2) %>% dplyr::select(!!tech_full2))
 #   )
 
 # prob_tech <- logistic(
-#   as.matrix(df_t2() %>% dplyr::select(cons, !!xs_full)) %*% reg_u0_c0$coefficients
+#   as.matrix(df_t(2) %>% dplyr::select(cons, !!xs_full)) %*% reg_u0_c0$coefficients
 #   )
 
 prob_tech_sum <- sum(prob_tech)
 
-covariates <- as.matrix(df_t2() %>% dplyr::select(cons, !!tech_full, !!xs_full))
+covariates <- as.matrix(df_t(2) %>% dplyr::select(cons, !!tech_full, !!xs_full))
 
 temp <- logistic(covariates %*% t(as.matrix(df_reg[, c("cons", tech_full, xs_full)])))
 
@@ -345,7 +341,7 @@ if (is.nan(df_cdf$cdf_tech[length(df_cdf$cdf_tech)])) {
 
 # *** cdf_cont -------------------------------------------------------------
 
-covariates <- as.matrix(df_t1() %>% dplyr::select(cons, !!tech_full, !!xs_full))
+covariates <- as.matrix(df_t(1) %>% dplyr::select(cons, !!tech_full, !!xs_full))
 df_cdf$cdf_cont <- colMeans(logistic(covariates %*% t(as.matrix(df_reg[, c("cons", tech_full, xs_full)]))))
 
 if (is.nan(df_cdf$cdf_cont[length(df_cdf$cdf_cont)])) {
@@ -367,7 +363,7 @@ if (is.nan(df_cdf$cdf_cont[length(df_cdf$cdf_cont)])) {
 # # *** cdf_cont ------------------------------------------------------------
 
 # df_cdf$cdf_cont <- as.vector(
-#   as.matrix(df_reg[, c("cons", tech, xs_full)]) %*% colMeans(df_t1() %>% dplyr::select(cons, !!tech, !!xs_full))
+#   as.matrix(df_reg[, c("cons", tech, xs_full)]) %*% colMeans(df_t(1) %>% dplyr::select(cons, !!tech, !!xs_full))
 # )
 
 
@@ -398,11 +394,11 @@ df_cdf <- df_cdf %>%
   filter(!is.na(d_cdf))
 
 # t1 and t2's observed mean and sd 
-lwage_t1_mean <- wtd.mean(df_t1()$lwage, df_t1()$weight)
-lwage_t1_sd <- sqrt(wtd.var(df_t1()$lwage, df_t1()$weight, normwt = T))
+lwage_t1_mean <- wtd.mean(df_t(1)$lwage, df_t(1)$weight)
+lwage_t1_sd <- sqrt(wtd.var(df_t(1)$lwage, df_t(1)$weight, normwt = T))
 
-lwage_t2_mean <- wtd.mean(df_t2()$lwage, df_t2()$weight)
-lwage_t2_sd <- sqrt(wtd.var(df_t2()$lwage, df_t2()$weight, normwt = T))
+lwage_t2_mean <- wtd.mean(df_t(2)$lwage, df_t(2)$weight)
+lwage_t2_sd <- sqrt(wtd.var(df_t(2)$lwage, df_t(2)$weight, normwt = T))
 
 # mean and sd using empirical distributions: to compare with observed ones
 avg_empr <- sum(df_cdf$lwage * df_cdf$d_cdf) / sum(df_cdf$d_cdf)
@@ -439,8 +435,8 @@ df_decompose[2, ] <- list("pct",
 # 
 # percents <- c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
 # # observed
-# t1_percentiles <- wtd.quantile(df_t1()$lwage, df_t1()$weight, probs = percents, normwt = T)
-# t2_percentiles <- wtd.quantile(df_t2()$lwage, df_t2()$weight, probs = percents, normwt = T)
+# t1_percentiles <- wtd.quantile(df_t(1)$lwage, df_t(1)$weight, probs = percents, normwt = T)
+# t2_percentiles <- wtd.quantile(df_t(2)$lwage, df_t(2)$weight, probs = percents, normwt = T)
 # 
 # # tech
 # for (i in 1:length(lwage_thresholds)) {

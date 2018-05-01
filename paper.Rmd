@@ -34,6 +34,10 @@ knitr::opts_chunk$set(echo = FALSE, cache = FALSE, warning = FALSE, message = FA
   \endgroup
 }
 
+\newcommand{\lrangle}[1]{
+  \langle #1 \rangle
+}
+
 \bigskip
 
 \begin{center}
@@ -129,11 +133,17 @@ $$F_{Y|X} (y|x) = \varLambda(P(x)' \beta(y)) \text{ for all } y \in \mathcal{Y}$
 where $\varLambda$ is a link function, $P(x)$ is a vector of transformation of $x$, and $\beta(\cdot)$ is an unknown function-valued parameter. @chernozhukov_victor_inference_2013 noted that with a sufficiently rich $P(x)$, the choice of the link function is not important.
 
 The estimator of each counterfactual distribution is obtained by the plug-in rule.
-$$\hat{F}_{Y<j|k>}(y) = \int_{\mathcal{X_k}} \hat{F}_{Y_j | X_j}(y | x) d \hat{F_{X_k}}(x), y \in \mathcal{Y_j}, (j, k) \in \mathcal{JK}$$
+$$\hat{F}_{Y<j|k>}(y) = \int_{\mathcal{X}_k} \hat{F}_{Y_j | X_j}(y | x) d \hat{F_{X_k}}(x), y \in \mathcal{Y_j}, (j, k) \in \mathcal{JK}$$
 
 Minimum wage censoring [^min_wage]
 
 [^min_wage]: Wage and Hour Division, United States Department of Labor (https://www.dol.gov/whd/minwage/chart.htm)
+
+$$
+F_{Y \lrangle{(1, 1)|(1, 1)}} - F_{Y \lrangle{(0, 0)|(0, 0)}} = 
+  \underbrace{[F_{Y \lrangle{(1, 1)|(1, 1)}} - F_{Y \lrangle{(0, 0)|(1, 1)}}]}_\text{Wage Structure Effects} + 
+  \underbrace{[F_{Y \lrangle{(0, 0)|(1, 1)}} - F_{Y \lrangle{(0, 0)|(0, 0)}}]}_\text{Composition Effects}
+$$
 
 # Results
 <!-- Graph as in the paper -->

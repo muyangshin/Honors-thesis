@@ -14,13 +14,13 @@ df_aces <- load_df_aces()
 
 # 2002 vs 2016 ------------------------------------------------------------
 # cdf
-df_cdf_observed <- as.data.frame(wtd.Ecdf(df_t1$lwage, df_t1$weight, normwt = T)) %>%
+as.data.frame(wtd.Ecdf(df_t1()$lwage, df_t1()$weight)) %>%
   mutate(year = years[1]) %>%
-  bind_rows(as.data.frame(wtd.Ecdf(df_t2$lwage, df_t2$weight, normwt = T)) %>%
+  bind_rows(as.data.frame(wtd.Ecdf(df_t2()$lwage, df_t2()$weight)) %>%
               mutate(year = years[2])) %>%
-  mutate(year = factor(year))
-
-ggplot(df_cdf_observed, aes(x, ecdf, color = year)) +
+  bind_rows(df_cdf_tech_only %>% dplyr::select(x = lwage, ecdf = cdf_tech) %>% mutate(year = 0)) %>%
+  mutate(year = factor(year)) %>%
+  ggplot(aes(x, ecdf, color = year)) +
   geom_line()
 
 
@@ -64,14 +64,14 @@ df_wage_ineq_over_time <- df_aces %>%
   # measures
   group_by(YEAR, SEX) %>%
   summarise(
-    sd = sqrt(wtd.var(lwage, weight, normwt = T)),
-    q5 = wtd.quantile(lwage, weight, probs = c(0.05), normwt = T),
-    q10 = wtd.quantile(lwage, weight, probs = c(0.1), normwt = T),
-    q25 = wtd.quantile(lwage, weight, probs = c(0.25), normwt = T),
-    q50 = wtd.quantile(lwage, weight, probs = c(0.5), normwt = T),
-    q75 = wtd.quantile(lwage, weight, probs = c(0.75), normwt = T),
-    q90 = wtd.quantile(lwage, weight, probs = c(0.90), normwt = T),
-    q95 = wtd.quantile(lwage, weight, probs = c(0.95), normwt = T),
+    sd = sqrt(wtd.var(lwage, weight)),
+    q5 = wtd.quantile(lwage, weight, probs = c(0.05)),
+    q10 = wtd.quantile(lwage, weight, probs = c(0.1)),
+    q25 = wtd.quantile(lwage, weight, probs = c(0.25)),
+    q50 = wtd.quantile(lwage, weight, probs = c(0.5)),
+    q75 = wtd.quantile(lwage, weight, probs = c(0.75)),
+    q90 = wtd.quantile(lwage, weight, probs = c(0.90)),
+    q95 = wtd.quantile(lwage, weight, probs = c(0.95)),
     gini = weighted.gini(wage, weight)[[1]]
   ) %>%
   
@@ -287,6 +287,7 @@ df_aces %>%
   ggplot(aes(YEAR, mean_diff)) +
   geom_line()
 
+# by tech-educ group
 df_aces %>%
   filter(SEX == 1) %>%
   mutate(tech_educ_group = ifelse(schooling <= 12, ifelse(high_tech == 1, "HS-Tech", "HS-NonTech"),
@@ -296,3 +297,18 @@ df_aces %>%
   summarise(mean_wage = weighted.mean(wage, weight)) %>%
   ggplot(aes(YEAR, mean_wage, color = tech_educ_group)) +
   geom_line()
+
+# between educated, wage distribution by high_tech
+ggplot(df_t1(), aes(x = lwage, color = high_tech)) + geom_histogram(alpha = .3)
+ggplot(df_t2(), aes(x = lwage, color = high_tech)) + geom_density()
+
+sum(df_t2_tech$lwage < threshold) / nrow(df_t2_tech)
+sum(df_t2_nontech$lwage < threshold) / nrow(df_t2_nontech)
+
+j <- 50
+threshold <- lwage_thresholds[j]
+
+y <- ifelse(df_t2()$lwage <= threshold, 1, 0)
+
+# linear
+reg <- lm(y ~ high_tech, data = df_t2(), weights = weight)

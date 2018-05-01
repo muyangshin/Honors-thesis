@@ -6,23 +6,15 @@ source("code/tools.R")
 
 # LOAD DATA ---------------------------------------------------------------
 
-# df_aces <- load_df_aces()
-# df_aces_0 <- load_df()
-# df_org_2016 <- load_df_org("cps_org", "YEAR=2016")
-# df_org_1994 <- load_df_org("cps_org_94")
-# df_org_2002 <- load_df_org("cps_org", "YEAR=2002")
-
-# df_org <- load_df_org("cps_org")
-
 # start year, end year
-years <- c(2017, 1992)
+years <- c(1992, 2017)
 
 # read data from sql
 df <- load_df_aces(paste0("YEAR = ", years[1], " or YEAR = ", years[2]))
-                        
+
 # IND to naics
 df_IND_naics <- prepare_INDLY_conversion_census_to_naics(years, occs_high_tech, cached = T)
-  
+
 df <- df %>%
   mutate(cons = 1) %>%
   
@@ -30,6 +22,10 @@ df <- df %>%
   filter(SEX == 1)
 
 # create views for period 1 and 2
+df_t <- function(t) {
+  return(df %>% filter(YEAR == years[t]))
+}
+
 df_t1 <- function() {
   return(df %>% filter(YEAR == years[1]))
 }
@@ -63,142 +59,148 @@ df <- df %>%
     
     # college-educated only
     college == 1
-    )
-  
+  )
 
-# ANALYSIS: tech only ----------------------------------------------------------------
-
-quantile_interval <- 0.01
-
-# set thresholds for lwage
-lwage_thresholds <- wtd.quantile(df_t2()$lwage, df_t2()$weight, seq(0, 1, by = quantile_interval), normwt = T)
-
+# recalculate weight
 df <- df %>%
-  mutate(
-    tech_college_group = paste0(high_tech, "_", college),
-    tech_college_group = factor(tech_college_group)
-    )
-
-tech <- "high_tech"
-
-tech_full <- c()  # vector of tech variable names, including dummy variables
-tech_vector <- df[[tech]]
-if (!is.factor(tech_vector)) {
-  # non-categorical
-  tech_full <- tech
-  # tech_full2 <- tech
-} else {
-  # categorical
-  tech_new_vectors <- model.matrix(as.formula(paste0("~", tech)), df)
-  colnames(tech_new_vectors) <- paste0(tech, levels(tech_vector))
-  
-  tech_full <- c(tech_full, colnames(tech_new_vectors)[-1])
-  # tech_full2 <- c(tech_full2, colnames(tech_new_vectors))
-  df <- cbind(df, tech_new_vectors)
-  rm(tech_new_vectors)
-}
-
-# construct empty data frame to save regression coefficients
-df_reg_tech_only <- data.frame(matrix(ncol = 3 + length(tech_full),
-                            nrow = length(lwage_thresholds))) %>%
-  setNames(c("year", "lwage", "cons", tech_full))
-
-# distribution regression: using time 2
-for (j in seq_along(lwage_thresholds)) {
-  threshold <- lwage_thresholds[j]
-
-  y <- ifelse(df_t2()$lwage <= threshold, 1, 0)
-  reg_formula <- paste0("y ~ ", paste0(tech_full, collapse = " + "))
-
-  # linear
-  reg <- lm(reg_formula, data = df_t2(), weights = weight)
-
-  # # logistic
-  # reg <- glm(reg_formula, data = df_t2(), family = "binomial", weights = weight)
-
-  df_reg_tech_only[j, ] <- c(years[2], threshold, reg$coefficients)
-}
-
-# empty data frame to store cdfs
-df_cdf_tech_only <- data.frame(
-  year = numeric(length(lwage_thresholds)),
-  lwage = numeric(length(lwage_thresholds)),
-  cdf = numeric(length(lwage_thresholds)),
-  cdf_tech = numeric(length(lwage_thresholds))
-)
-
-# year
-df_cdf_tech_only$year <- years[2]
-
-# lwage
-df_cdf_tech_only$lwage <- lwage_thresholds
-
-# cdf of period 1 and 2
-df_cdf_tech_only$cdf <- seq(0, 1, by = quantile_interval)
-
-# covariate distributions
-# cdf_tech
-covariates <- as.matrix(df_t1() %>% dplyr::select(cons, !!tech_full))
-
-# linear
-df_cdf_tech_only$cdf_tech <- colMeans(covariates %*% t(as.matrix(df_reg_tech_only[, c("cons", tech_full)])))
-
-# # logistic
-# df_cdf_tech_only$cdf_tech <- colMeans(logistic(covariates %*% t(as.matrix(df_reg_tech_only[, c("cons", tech_full)]))))
-
-if (is.nan(df_cdf_tech_only$cdf_tech[length(df_cdf_tech_only$cdf_tech)])) {
-  df_cdf_tech_only$cdf_Tech[length(df_cdf_tech_only$cdf_tech)] <- 1
-}
-
-# construct variance
-df_cdf_tech_only <- df_cdf_tech_only %>%
-  mutate(
-    lwage_mid = lwage - (lwage - lag(lwage)) / 2,
-    d_cdf = cdf - lag(cdf),
-    d_cdf_tech = cdf_tech - lag(cdf_tech)
-  ) %>%
-  filter(!is.na(d_cdf))
-
-avg_empr <- sum(df_cdf_tech_only$lwage * df_cdf_tech_only$d_cdf) / sum(df_cdf_tech_only$d_cdf)
-sd_empr <- sqrt(sum(df_cdf_tech_only$lwage^2 * df_cdf_tech_only$d_cdf) / sum(df_cdf_tech_only$d_cdf) - avg_empr^2)
-
-avg_tech <- sum(df_cdf_tech_only$lwage * df_cdf_tech_only$d_cdf_tech) / sum(df_cdf_tech_only$d_cdf_tech)
-sd_tech <- sqrt(sum(df_cdf_tech_only$lwage^2 * df_cdf_tech_only$d_cdf_tech) / sum(df_cdf_tech_only$d_cdf_tech) - avg_tech^2)
-
-lwage_t1_mean <- wtd.mean(df_t1()$lwage, df_t1()$weight)
-lwage_t1_sd <- sqrt(wtd.var(df_t1()$lwage, df_t1()$weight, normwt = T))
-
-lwage_t2_mean <- wtd.mean(df_t2()$lwage, df_t2()$weight)
-lwage_t2_sd <- sqrt(wtd.var(df_t2()$lwage, df_t2()$weight, normwt = T))
+  group_by(YEAR) %>%
+  mutate(weight = weight / sum(weight)) %>%
+  ungroup()
 
 
-# results data frame
-df_decompose_tech_only <- data.frame(matrix(ncol = 4, nrow = 2))
-colnames(df_decompose_tech_only) <- c("name", "total", "tech", "unexplained")
-
-df_decompose_tech_only[1, ] <- list("Std Dev",
-                                    lwage_t2_sd - lwage_t1_sd,
-                                    lwage_t2_sd - sd_tech,
-                                    sd_tech - lwage_t1_sd
-)
-
-df_decompose_tech_only[2, ] <- list("pct",
-                                    100,
-                                    100 * (lwage_t2_sd - sd_tech) / (lwage_t2_sd - lwage_t1_sd),
-                                    100 * (sd_tech - lwage_t1_sd) / (lwage_t2_sd - lwage_t1_sd)
-)
-
-View(df_decompose_tech_only)
+# # ANALYSIS: tech only ----------------------------------------------------------------
+# 
+# quantile_interval <- 0.01
+# 
+# # set thresholds for lwage
+# lwage_thresholds <- wtd.quantile(df_t2()$lwage, df_t2()$weight, seq(0, 1, by = quantile_interval), normwt = T)
+# 
+# df <- df %>%
+#   mutate(
+#     tech_college_group = paste0(high_tech, "_", college),
+#     tech_college_group = factor(tech_college_group)
+#   )
+# 
+# tech <- "high_tech"
+# 
+# tech_full <- c()  # vector of tech variable names, including dummy variables
+# tech_vector <- df[[tech]]
+# if (!is.factor(tech_vector)) {
+#   # non-categorical
+#   tech_full <- tech
+#   # tech_full2 <- tech
+# } else {
+#   # categorical
+#   tech_new_vectors <- model.matrix(as.formula(paste0("~", tech)), df)
+#   colnames(tech_new_vectors) <- paste0(tech, levels(tech_vector))
+#   
+#   tech_full <- c(tech_full, colnames(tech_new_vectors)[-1])
+#   # tech_full2 <- c(tech_full2, colnames(tech_new_vectors))
+#   df <- cbind(df, tech_new_vectors)
+#   rm(tech_new_vectors)
+# }
+# 
+# # construct empty data frame to save regression coefficients
+# df_reg_tech_only <- data.frame(matrix(ncol = 3 + length(tech_full),
+#                                       nrow = length(lwage_thresholds))) %>%
+#   setNames(c("year", "lwage", "cons", tech_full))
+# 
+# # distribution regression: using time 2
+# for (j in seq_along(lwage_thresholds)) {
+#   threshold <- lwage_thresholds[j]
+#   
+#   y <- ifelse(df_t2()$lwage <= threshold, 1, 0)
+#   reg_formula <- paste0("y ~ ", paste0(tech_full, collapse = " + "))
+#   
+#   # linear
+#   reg <- lm(reg_formula, data = df_t2(), weights = weight)
+#   
+#   # # logistic
+#   # reg <- glm(reg_formula, data = df_t2(), family = "binomial", weights = weight)
+#   
+#   df_reg_tech_only[j, ] <- c(years[2], threshold, reg$coefficients)
+# }
+# 
+# # empty data frame to store cdfs
+# df_cdf_tech_only <- data.frame(
+#   year = numeric(length(lwage_thresholds)),
+#   lwage = numeric(length(lwage_thresholds)),
+#   cdf = numeric(length(lwage_thresholds)),
+#   cdf_tech = numeric(length(lwage_thresholds))
+# )
+# 
+# # year
+# df_cdf_tech_only$year <- years[2]
+# 
+# # lwage
+# df_cdf_tech_only$lwage <- lwage_thresholds
+# 
+# # cdf of period 1 and 2
+# df_cdf_tech_only$cdf <- seq(0, 1, by = quantile_interval)
+# 
+# # covariate distributions
+# # cdf_tech
+# covariates <- as.matrix(df_t1() %>% dplyr::select(cons, !!tech_full))
+# 
+# # linear
+# df_cdf_tech_only$cdf_tech <- colMeans(covariates %*% t(as.matrix(df_reg_tech_only[, c("cons", tech_full)])))
+# 
+# # # logistic
+# # df_cdf_tech_only$cdf_tech <- colMeans(logistic(covariates %*% t(as.matrix(df_reg_tech_only[, c("cons", tech_full)]))))
+# 
+# if (is.nan(df_cdf_tech_only$cdf_tech[length(df_cdf_tech_only$cdf_tech)])) {
+#   df_cdf_tech_only$cdf_Tech[length(df_cdf_tech_only$cdf_tech)] <- 1
+# }
+# 
+# # construct variance
+# df_cdf_tech_only <- df_cdf_tech_only %>%
+#   mutate(
+#     lwage_mid = lwage - (lwage - lag(lwage)) / 2,
+#     d_cdf = cdf - lag(cdf),
+#     d_cdf_tech = cdf_tech - lag(cdf_tech)
+#   ) %>%
+#   filter(!is.na(d_cdf))
+# 
+# avg_empr <- sum(df_cdf_tech_only$lwage * df_cdf_tech_only$d_cdf) / sum(df_cdf_tech_only$d_cdf)
+# sd_empr <- sqrt(sum(df_cdf_tech_only$lwage^2 * df_cdf_tech_only$d_cdf) / sum(df_cdf_tech_only$d_cdf) - avg_empr^2)
+# 
+# avg_tech <- sum(df_cdf_tech_only$lwage * df_cdf_tech_only$d_cdf_tech) / sum(df_cdf_tech_only$d_cdf_tech)
+# sd_tech <- sqrt(sum(df_cdf_tech_only$lwage^2 * df_cdf_tech_only$d_cdf_tech) / sum(df_cdf_tech_only$d_cdf_tech) - avg_tech^2)
+# 
+# lwage_t1_mean <- wtd.mean(df_t1()$lwage, df_t1()$weight)
+# lwage_t1_sd <- sqrt(wtd.var(df_t1()$lwage, df_t1()$weight, normwt = T))
+# 
+# lwage_t2_mean <- wtd.mean(df_t2()$lwage, df_t2()$weight)
+# lwage_t2_sd <- sqrt(wtd.var(df_t2()$lwage, df_t2()$weight, normwt = T))
+# 
+# 
+# # results data frame
+# df_decompose_tech_only <- data.frame(matrix(ncol = 4, nrow = 2))
+# colnames(df_decompose_tech_only) <- c("name", "total", "tech", "unexplained")
+# 
+# df_decompose_tech_only[1, ] <- list("Std Dev",
+#                                     lwage_t2_sd - lwage_t1_sd,
+#                                     lwage_t2_sd - sd_tech,
+#                                     sd_tech - lwage_t1_sd
+# )
+# 
+# df_decompose_tech_only[2, ] <- list("pct",
+#                                     100,
+#                                     100 * (lwage_t2_sd - sd_tech) / (lwage_t2_sd - lwage_t1_sd),
+#                                     100 * (sd_tech - lwage_t1_sd) / (lwage_t2_sd - lwage_t1_sd)
+# )
+# 
+# View(df_decompose_tech_only)
 
 
 
 
 # ANALYSIS: tech + other covariates -------------------------------------------------
 
-quantile_interval <- 0.001
+quantile_interval <- 0.01
 
 # set thresholds for lwage
-lwage_thresholds <- wtd.quantile(df_t2()$lwage, df_t2()$weight, seq(0, 1, by = quantile_interval), normwt = T)
+lwage_thresholds <- wtd.quantile(df$lwage, df$weight, seq(0, 1, by = quantile_interval), normwt = T)
 
 df <- df %>%
   mutate(
@@ -243,7 +245,7 @@ for (x in xs) {
     # categorical
     x_new_vectors <- model.matrix(as.formula(paste0("~", x)), df)
     x_new_vectors <- x_new_vectors[, -1]  # exclude constant
-
+    
     xs_full <- c(xs_full, colnames(x_new_vectors))
     df <- cbind(df, x_new_vectors)
     rm(x_new_vectors)
@@ -253,42 +255,46 @@ for (x in xs) {
 
 # * Counterfactual Y1 given X1 ----------------------------------------------
 
-# construct empty data frame to save regression coefficients
-df_reg <- data.frame(matrix(ncol = 3 + length(tech_full) + length(xs_full), 
-                            nrow = length(lwage_thresholds))) %>%
-  setNames(c("year", "lwage", "cons", tech_full, xs_full))
+df_regs <- vector("list", 2)
 
-# distribution regression: using time 2
-for (j in seq_along(lwage_thresholds)) {
-  threshold <- lwage_thresholds[j]
-  
-  y <- ifelse(df_t2()$lwage <= threshold, 1, 0)
-  reg_formula <- paste0("y ~ ", paste0(c(tech_full, xs_full), collapse = " + "))
-  
-  # # linear
-  # reg <- lm(reg_formula, data = df_t2(), weights = weight)
-  
-  # logistic
-  reg <- glm(reg_formula, data = df_t2(), family = "binomial", weights = weight)
-  
-  df_reg[j, ] <- c(years[2], threshold, reg$coefficients)
+# construct empty data frame to save regression coefficients
+for (i in 1:2) {
+  df_regs[[i]] <- data.frame(matrix(ncol = 3 + length(tech_full) + length(xs_full), 
+                                    nrow = length(lwage_thresholds))) %>%
+    setNames(c("year", "lwage", "cons", tech_full, xs_full))
+
+  # distribution regression: using time 2
+  for (j in seq_along(lwage_thresholds)) {
+    threshold <- lwage_thresholds[j]
+    
+    y <- ifelse(df_t(i)$lwage <= threshold, 1, 0)
+    reg_formula <- paste0("y ~ ", paste0(c(tech_full, xs_full), collapse = " + "))
+    
+    # # linear
+    # reg <- lm(reg_formula, data = df_t2(), weights = weight)
+    
+    # logistic
+    reg <- glm(reg_formula, data = df_t(i), family = "binomial", weights = weight)
+    
+    df_regs[[i]][j, ] <- c(years[i], threshold, reg$coefficients)
+  }
 }
 
 
-# * conditional distribution u0 given c0 ------------------------------------
-
-reg_formula <- paste0(tech, " ~ ", paste0(xs_full, collapse = " + "))
-
-# binomial
-reg_u0_c0 <- glm(reg_formula,
-                 data = df_t1(),
-                 family = "binomial",
-                 weights = weight)
-
-# # multinomial
-# reg_u0_c0 <- multinom(reg_formula, 
-#                       data = df_t1(),
-#                       weights = weight)
+# # * conditional distribution u0 given c0 ------------------------------------
+# 
+# reg_formula <- paste0(tech, " ~ ", paste0(xs_full, collapse = " + "))
+# 
+# # binomial
+# reg_u0_c0 <- glm(reg_formula,
+#                  data = df_t1(),
+#                  family = "binomial",
+#                  weights = weight)
+# 
+# # # multinomial
+# # reg_u0_c0 <- multinom(reg_formula, 
+# #                       data = df_t1(),
+# #                       weights = weight)
 
 # * Construct distributions ---------------------------------------
 
@@ -296,7 +302,7 @@ reg_u0_c0 <- glm(reg_formula,
 df_cdf <- data.frame(
   year = numeric(length(lwage_thresholds)),
   lwage = numeric(length(lwage_thresholds)),
-  cdf = numeric(length(lwage_thresholds)),
+  # cdf = numeric(length(lwage_thresholds)),
   cdf_tech = numeric(length(lwage_thresholds)),
   cdf_cont = numeric(length(lwage_thresholds))
 )
@@ -308,9 +314,25 @@ df_cdf$year <- years[2]
 df_cdf$lwage <- lwage_thresholds
 
 # cdf of period 1 and 2
-df_cdf$cdf <- seq(0, 1, by = quantile_interval)
+# df_cdf$cdf <- seq(0, 1, by = quantile_interval)
 
 
+# ** cdf_tech --------------------
+
+covariates <- as.matrix(df_t(2) %>% dplyr::select(cons, !!tech_full, !!xs_full))
+
+coef_matrix <- as.matrix(cbind(df_regs[[1]][, c("cons")], 
+                               df_regs[[2]][, tech_full],
+                               df_regs[[1]][, xs_full]
+                               ))
+
+df_cdf$cdf_cont <- colMeans(logistic(
+  covariates %*% t(coef_matrix)
+  ))
+
+if (is.nan(df_cdf$cdf_cont[length(df_cdf$cdf_cont)])) {
+  df_cdf$cdf_cont[length(df_cdf$cdf_cont)] <- 1
+}
 
 # ** logistic -------------------------------------------------------------
 
@@ -394,7 +416,7 @@ df_cdf <- df_cdf %>%
     d_cdf = cdf - lag(cdf),
     d_cdf_tech = cdf_tech - lag(cdf_tech),
     d_cdf_cont = cdf_cont - lag(cdf_cont)
-    ) %>%
+  ) %>%
   filter(!is.na(d_cdf))
 
 # t1 and t2's observed mean and sd 

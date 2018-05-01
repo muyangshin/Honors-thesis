@@ -42,7 +42,7 @@ knitr::opts_chunk$set(echo = FALSE, cache = FALSE, warning = FALSE, message = FA
 
 \begingroup\setlength{\parindent}{0em}
 <!-- \setlength{\leftskip}{4em} -->
-This paper took an occupation-oriented approach to identify technology industry and analyze its relationship with the rising wage inequality at the industry level in the United States since 2002. By constructing a measure of technology use in each industry sector from occupation data, this paper finds that technology use is a relevant factor in determining a sector's average wage. Furthermore, this paper finds that technology use is unevenly distributed among sectors, and there have been substantial differences in the growth of wage and the share of technology and college-educated workers between the top 10% and bottom 50% wage groups.
+
 \endgroup
 
 \newpage

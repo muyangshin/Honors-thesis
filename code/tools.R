@@ -81,7 +81,7 @@ load_df_aces <- function(query = NULL) {
       ) %>%
     
     # weight: cps weight multiplied by number of hours worked
-    mutate(weight = ASECWT * WKSWORK1 * UHRSWORKLY) %>%
+    mutate(weight = ASECWT * WKSWORK1 * UHRSWORKLY / 52) %>%
 
     # schooling
     mutate(
@@ -137,6 +137,7 @@ load_df_aces <- function(query = NULL) {
       
       # marital status
       married = ifelse(MARST == 1, 1, 0),
+      married = factor(married),
       
       # metropolitan area
       METAREA = factor(METAREA)
@@ -145,11 +146,6 @@ load_df_aces <- function(query = NULL) {
     # additional restriction: wage between $1 and $350 (in 2009 dollar)
     filter(wage >= 1, wage <= 350) %>%
     
-    # normalize weight
-    group_by(YEAR) %>%
-    mutate(weight = weight / sum(weight)) %>%
-    ungroup() %>%
-
     # occupations: stem, stem_related, high_tech, tech_group
     left_join(occ10_tech %>% 
                 dplyr::select(OCC10LY, stem, stem_related, high_tech, tech_group),
@@ -157,6 +153,8 @@ load_df_aces <- function(query = NULL) {
     mutate_at(vars(stem, stem_related, high_tech, tech_group),
               funs(replace(., is.na(.), 0))
     )
+    # mutate_at(vars(stem, stem_related, high_tech, tech_group),
+    #           funs(factor(.)))
 
   return(df)
 }

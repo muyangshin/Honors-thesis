@@ -69,7 +69,10 @@ load_df_aces <- function(query = NULL) {
       INCWAGE != 0, INCWAGE != 9999999, INCWAGE != 9999998,
 
       # keep private workers
-      CLASSWLY == 22
+      CLASSWLY == 22,
+      
+      # drop if wages were allocated
+      QOINCWAGE == 0, (SRCEARN != 1 | QINCLONG == 0)
       ) %>%
 
     # minimum wage: drop if lower than minimum wage
@@ -112,8 +115,8 @@ load_df_aces <- function(query = NULL) {
       # 5 education groups: below_hs, hs, college_some, college, graduate
       schooling_group = ifelse(schooling < 12, "below_hs",
                                ifelse(schooling == 12, "hs",
-                                      ifelse(schooling < 16, "college_some", "college"))),
-                                             # ifelse(schooling == 16, "college", "graduate")))),
+                                      ifelse(schooling < 16, "college_some", # "college"))),
+                                             ifelse(schooling == 16, "college", "graduate")))),
       college = ifelse(schooling > 12, 1, 0),
       # college = factor(college, labels("HS", "College")),
       
@@ -142,7 +145,6 @@ load_df_aces <- function(query = NULL) {
       
       # marital status
       married = ifelse(MARST == 1, 1, 0),
-      married = factor(married),
       
       # metropolitan area
       METAREA = factor(METAREA)
@@ -158,8 +160,6 @@ load_df_aces <- function(query = NULL) {
     mutate_at(vars(stem, stem_related, high_tech, tech_group),
               funs(replace(., is.na(.), 0))
     )
-    # mutate_at(vars(stem, stem_related, high_tech, tech_group),
-    #           funs(factor(.)))
 
   return(df)
 }

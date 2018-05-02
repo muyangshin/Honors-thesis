@@ -10,6 +10,11 @@ logistic <- function(x) {
   return(exp(x) / (1 + exp(x)))
 }
 
+weighted_colMeans <- function(df, w) {
+  sapply(1:ncol(df),
+         function(i) weighted.mean(df[, i], w = w))
+}
+
 # Read IPUMS CPS data and write to SQLite
 write_ipums_to_sql <- function(cps_data_file, cps_ddi_file, out, tablename = "cps", append = F) {
   # READ IPUMS DATA ---------------------------------------------------------

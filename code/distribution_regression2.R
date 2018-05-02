@@ -1,5 +1,6 @@
 library(tidyverse)
-library(Hmisc)  # weighted
+# library(Hmisc)  # weighted
+library(survey)  # survey analysis
 
 source("code/tools.R")
 
@@ -20,11 +21,6 @@ df <- df %>%
   
   # restrict to men for now
   filter(SEX == 1)
-
-# create views for period 1 and 2
-df_t <- function(t) {
-  return(df %>% filter(YEAR == years[t]))
-}
 
 # list of METAREAs which appears only once
 METAREAs_appearing_once <- df %>% 
@@ -53,25 +49,8 @@ df <- df %>%
     college == 1
   )
 
-# recalculate weight
-df <- df %>%
-  group_by(YEAR) %>%
-  mutate(weight = weight / sum(weight)) %>%
-  ungroup()
-
 
 # analysis setup -------------------------------------------------
-
-quantile_interval <- 0.01
-
-# set thresholds for lwage
-lwage_thresholds <- wtd.quantile(df$lwage, df$weight, seq(0, 1, by = quantile_interval), normwt = T)
-
-# df <- df %>%
-#   mutate(
-#     tech_college_group = paste0(high_tech, "_", college),
-#     tech_college_group = factor(tech_college_group)
-#   )
 
 # regression specification
 tech <- "high_tech"
@@ -117,6 +96,23 @@ for (x in xs) {
   }
 }
 
+# construct survey design object
+dfw <- svydesign(ids = ~1, data = df, weights = ~weight)
+dfw_t1 <- subset(dfw, YEAR == years[1])
+dfw_t2 <- subset(dfw, YEAR == years[2])
+
+dfw_t <- function(i) {
+  if (i == 1) {
+    return(dfw_t1)
+  } else {
+    return(dfw_t2)
+  }
+}
+
+# set thresholds for lwage
+quantile_interval <- 0.01
+lwage_thresholds <- t(svyquantile(~lwage, dfw, seq(0, 1, by = quantile_interval)))
+
 
 # wage structure ----------------------------------------------------------
 
@@ -134,14 +130,14 @@ for (i in 1:2) {
   for (j in seq_along(lwage_thresholds)) {
     threshold <- lwage_thresholds[j]
     
-    y <- ifelse(df_t(i)$lwage <= threshold, 1, 0)
+    y <- ifelse(dfw_t(i)$variables$lwage <= threshold, 1, 0)
     reg_formula <- paste0("y ~ ", paste0(c(tech_full, xs_full), collapse = " + "))
     
     # # linear
     # reg <- lm(reg_formula, data = df_t(2), weights = weight)
     
     # logistic
-    reg <- glm(reg_formula, data = df_t(i), family = "binomial", weights = weight)
+    reg <- svyglm(reg_formula, design = dfw_t(i), family = "binomial")
     
     df_regs[[i]][j, ] <- c(years[i], threshold, reg$coefficients)
   }
@@ -152,19 +148,18 @@ for (i in 1:2) {
 
 # empty data frame to store cdfs
 df_cdf <- data.frame(
-  year = numeric(length(lwage_thresholds)),
+  # year = numeric(length(lwage_thresholds)),
   lwage = numeric(length(lwage_thresholds)),
-  # cdf = numeric(length(lwage_thresholds)),
   cdf_tech_ws = numeric(length(lwage_thresholds)),
   cdf_cont_ws = numeric(length(lwage_thresholds)),
   cdf_tech_comp = numeric(length(lwage_thresholds))
 )
 
-# year
-df_cdf$year <- years[2]
+# # year
+# df_cdf$year <- years[2]
 
 # lwage
-df_cdf$lwage <- lwage_thresholds
+df_cdf$lwage <- as.vector(lwage_thresholds)
 
 # cdf of period 1 and 2
 # df_cdf$cdf <- seq(0, 1, by = quantile_interval)
@@ -172,17 +167,21 @@ df_cdf$lwage <- lwage_thresholds
 
 # ** cdf_tech_ws --------------------
 
-covariates <- as.matrix(df_t(2) %>% dplyr::select(cons, !!tech_full, !!xs_full))
+covariates <- as.matrix(dfw_t2$variables %>% dplyr::select(cons, !!tech_full, !!xs_full))
 
 coef_matrix <- as.matrix(cbind(df_regs[[2]][, c("cons")], 
                                df_regs[[1]][, tech_full],
                                df_regs[[2]][, xs_full]
                                ))
 
-df_cdf$cdf_tech_ws <- colMeans(logistic(
-  covariates %*% t(coef_matrix)
-  ))
+df_cdf$cdf_tech_ws <- weighted_colMeans(
+  logistic(
+    covariates %*% t(coef_matrix)
+    ),
+  weights(dfw_t2)
+  )
 
+# last entry
 if (is.nan(df_cdf$cdf_cont_ws[length(df_cdf$cdf_cont_ws)])) {
   df_cdf$cdf_cont_ws[length(df_cdf$cdf_cont_ws)] <- 1
 }
@@ -195,10 +194,14 @@ coef_matrix <- as.matrix(cbind(df_regs[[1]][, c("cons")],
                                df_regs[[1]][, xs_full]
 ))
 
-df_cdf$cdf_cont_ws <- colMeans(logistic(
-  covariates %*% t(coef_matrix)
-  ))
+df_cdf$cdf_cont_ws <- weighted_colMeans(
+  logistic(
+    covariates %*% t(coef_matrix)
+    ),
+  weights(dfw_t2)
+  )
 
+# last entry
 if (is.nan(df_cdf$cdf_cont_ws[length(df_cdf$cdf_cont_ws)])) {
   df_cdf$cdf_cont_ws[length(df_cdf$cdf_cont_ws)] <- 1
 }
@@ -229,10 +232,9 @@ if (is.nan(df_cdf$cdf_cont_ws[length(df_cdf$cdf_cont_ws)])) {
 reg_formula <- paste0(tech, " ~ ", paste0(xs_full, collapse = " + "))
 
 # binomial
-reg_u0_c0 <- glm(reg_formula,
-                 data = df_t(1),
-                 family = "binomial",
-                 weights = weight)
+reg_u0_c0 <- svyglm(reg_formula,
+                 design = dfw_t1,
+                 family = "binomial")
 
 # # multinomial
 # reg_u0_c0 <- multinom(reg_formula,
@@ -243,11 +245,10 @@ reg_u0_c0 <- glm(reg_formula,
 # * cdf_tech_comp: Pr_0(tech | c_1) ------------------------------------------
 
 # binomial
-prob_tech <- logistic(predict(reg_u0_c0, df_t(2) %>% dplyr::select(cons, !!xs_full)))
-
+prob_tech <- logistic(predict(reg_u0_c0, dfw_t2$variables %>% dplyr::select(cons, !!xs_full)))
 prob_tech_sum <- sum(prob_tech)
 
-covariates <- as.matrix(df_t(2) %>% dplyr::select(cons, !!tech_full, !!xs_full))
+covariates <- as.matrix(dfw_t2$variables %>% dplyr::select(cons, !!tech_full, !!xs_full))
 
 temp <- logistic(
   covariates %*% t(as.matrix(
@@ -255,15 +256,25 @@ temp <- logistic(
     ))
   )
 
-df_cdf$cdf_tech_comp <- sapply(1:nrow(df_regs[[1]]),
-                               function(i) weighted.mean(temp[, i], w = prob_tech / prob_tech_sum))
+df_cdf$cdf_tech_comp <- weighted_colMeans(temp, weights(dfw_t2) * prob_tech / prob_tech_sum)
 
+# last entry
 if (is.nan(df_cdf$cdf_tech_comp[length(df_cdf$cdf_tech_comp)])) {
   df_cdf$cdf_tech_comp[length(df_cdf$cdf_tech_comp)] <- 1
 }
 
 
 # results ------------------------------------------------------
+
+# create d_cdf
+df_cdf <- df_cdf %>%
+  mutate(
+    lwage_mid = lwage - (lwage - lag(lwage)) / 2,
+    d_cdf_tech_ws = cdf_tech_ws - lag(cdf_tech_ws),
+    d_cdf_cont_ws = cdf_cont_ws - lag(cdf_cont_ws),
+    d_cdf_tech_comp = cdf_tech_comp - lag(cdf_tech_comp)
+  ) %>%
+  filter(!is.na(d_cdf_tech_ws))
 
 # summary statistics
 df_summary <- df %>% 
@@ -280,21 +291,12 @@ colnames(df_decompose) <- c("name", "total", "tech_ws", "control_ws", "tech_comp
 
 # * variance ------------------------------------------------------
 
-df_cdf <- df_cdf %>%
-  mutate(
-    lwage_mid = lwage - (lwage - lag(lwage)) / 2,
-    d_cdf_tech_ws = cdf_tech_ws - lag(cdf_tech_ws),
-    d_cdf_cont_ws = cdf_cont_ws - lag(cdf_cont_ws),
-    d_cdf_tech_comp = cdf_tech_comp - lag(cdf_tech_comp)
-  ) %>%
-  filter(!is.na(d_cdf_tech_ws))
-
 # t1 and t2's observed mean and sd 
-lwage_t1_mean <- wtd.mean(df_t(1)$lwage, df_t(1)$weight)
-lwage_t1_sd <- sqrt(wtd.var(df_t(1)$lwage, df_t(1)$weight, normwt = T))
+lwage_t1_mean <- svymean(~lwage, dfw_t1)
+lwage_t1_sd <- sqrt(svyvar(~lwage, dfw_t1))
 
-lwage_t2_mean <- wtd.mean(df_t(2)$lwage, df_t(2)$weight)
-lwage_t2_sd <- sqrt(wtd.var(df_t(2)$lwage, df_t(2)$weight, normwt = T))
+lwage_t2_mean <- svymean(~lwage, dfw_t2)
+lwage_t2_sd <- sqrt(svyvar(~lwage, dfw_t2))
 
 # tech ws
 avg_tech_ws <- sum(df_cdf$lwage * df_cdf$d_cdf_tech_ws) / sum(df_cdf$d_cdf_tech_ws)
@@ -310,174 +312,88 @@ sd_tech_comp <- sqrt(sum(df_cdf$lwage^2 * df_cdf$d_cdf_tech_comp) / sum(df_cdf$d
 
 # write to df
 df_decompose[1, ] <- list("Std Dev", 
-                          lwage_t2_sd - lwage_t1_sd,
-                          lwage_t2_sd - sd_tech_ws,
-                          sd_tech_ws - sd_cont_ws,
-                          sd_cont_ws - sd_tech_comp,
-                          sd_tech_comp - lwage_t1_sd
+                          sprintf("%.3f", lwage_t2_sd - lwage_t1_sd),
+                          sprintf("%.3f", lwage_t2_sd - sd_tech_ws),
+                          sprintf("%.3f", sd_tech_ws - sd_cont_ws),
+                          sprintf("%.3f", sd_cont_ws - sd_tech_comp),
+                          sprintf("%.3f", sd_tech_comp - lwage_t1_sd)
 )
 
 df_decompose[2, ] <- list("pct", 
                           100,
-                          100 * (lwage_t2_sd - sd_tech_ws) / (lwage_t2_sd - lwage_t1_sd),
-                          100 * (sd_tech_ws - sd_cont_ws) / (lwage_t2_sd - lwage_t1_sd),
-                          100 * (sd_cont_ws - sd_tech_comp) / (lwage_t2_sd - lwage_t1_sd),
-                          100 * (sd_tech_comp - lwage_t1_sd) / (lwage_t2_sd - lwage_t1_sd)
+                          sprintf("%.1f%%", 100 * (lwage_t2_sd - sd_tech_ws) / (lwage_t2_sd - lwage_t1_sd)),
+                          sprintf("%.1f%%", 100 * (sd_tech_ws - sd_cont_ws) / (lwage_t2_sd - lwage_t1_sd)),
+                          sprintf("%.1f%%", 100 * (sd_cont_ws - sd_tech_comp) / (lwage_t2_sd - lwage_t1_sd)),
+                          sprintf("%.1f%%", 100 * (sd_tech_comp - lwage_t1_sd) / (lwage_t2_sd - lwage_t1_sd))
 )
 
 
 # * percentiles ---------------------------------------------------
 
 percents <- c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
+
 # observed
-t1_percentiles <- wtd.quantile(df_t(1)$lwage, df_t(1)$weight, probs = percents, normwt = T)
+t1_percentiles <- t(svyquantile(~lwage, dfw_t1, percents))
 names(t1_percentiles) <- percents
 
-t2_percentiles <- wtd.quantile(df_t(2)$lwage, df_t(2)$weight, probs = percents, normwt = T)
+t2_percentiles <- t(svyquantile(~lwage, dfw_t2, percents))
 names(t2_percentiles) <- percents
 
-# tech_ws
-tech_ws_percentiles <- numeric(length(percents))
-j <- 1
-for (i in 1:length(lwage_thresholds)) {
-  if (df_cdf$cdf_tech_ws[i] > percents[j]) {
-    # intrapolate
-    tech_ws_percentiles[j] <- (df_cdf$cdf_tech_ws[i] - percents[j]) /
-      (df_cdf$cdf_tech_ws[i] - df_cdf$cdf_tech_ws[i - 1]) *
-      (lwage_thresholds[i] - lwage_thresholds[i - 1]) + lwage_thresholds[i - 1]
-    
-    j <- j + 1
-    if (j > length(percents)) {
-      break
+# for constructed cdfs
+cdfs <- c("tech_ws", "cont_ws", "tech_comp")
+cdf_percentiles <- vector("list", length(cdfs))
+names(cdf_percentiles) <- cdfs
+
+# calculate percentiles
+for (cdf in cdfs) {
+  cdf_percentiles[[cdf]] <- numeric(length(percents))
+  vector_name <- paste0("cdf_", cdf)
+  j <- 1
+  for (i in 1:length(lwage_thresholds)) {
+    if (df_cdf[i, vector_name] > percents[j]) {
+      # intrapolate
+      cdf_percentiles[[cdf]][j] <- (df_cdf[i, vector_name] - percents[j]) /
+        (df_cdf[i, vector_name] - df_cdf[i - 1, vector_name]) *
+        (lwage_thresholds[i] - lwage_thresholds[i - 1]) + lwage_thresholds[i - 1]
+      
+      j <- j + 1
+      if (j > length(percents)) {
+        break
+      }
     }
   }
+  names(cdf_percentiles[[cdf]]) <- percents
 }
-names(tech_ws_percentiles) <- percents
 
-# cont_ws
-cont_ws_percentiles <- numeric(length(percents))
-j <- 1
-for (i in 1:length(lwage_thresholds)) {
-  if (df_cdf$cdf_cont_ws[i] > percents[j]) {
-    # intrapolate
-    cont_ws_percentiles[j] <- (df_cdf$cdf_cont_ws[i] - percents[j]) /
-      (df_cdf$cdf_cont_ws[i] - df_cdf$cdf_cont_ws[i - 1]) *
-      (lwage_thresholds[i] - lwage_thresholds[i - 1]) + lwage_thresholds[i - 1]
-    
-    j <- j + 1
-    if (j > length(percents)) {
-      break
-    }
-  }
+# store in the data frame
+i <- 3
+for (pair in list(c(0.9, 0.1), c(0.5, 0.1), c(0.9, 0.5), c(0.75, 0.25), c(0.95, 0.05))) {
+  perc1 <- pair[1]
+  perc2 <- pair[2]
+  
+  t2_t1_diff <- (t2_percentiles[[as.character(perc1)]] - t2_percentiles[[as.character(perc2)]]) - (t1_percentiles[[as.character(perc1)]] - t1_percentiles[[as.character(perc2)]])
+  
+  df_decompose[i, ] <- list(
+    paste0(100 * perc1, "-", 100 * perc2),
+    sprintf("%.3f", t2_t1_diff),
+    sprintf("%.3f", (t2_percentiles[[as.character(perc1)]] - t2_percentiles[[as.character(perc2)]]) - (cdf_percentiles[["tech_ws"]][[as.character(perc1)]] - cdf_percentiles[["tech_ws"]][[as.character(perc2)]])),
+    sprintf("%.3f", (cdf_percentiles[["tech_ws"]][[as.character(perc1)]] - cdf_percentiles[["tech_ws"]][[as.character(perc2)]]) - (cdf_percentiles[["cont_ws"]][[as.character(perc1)]] - cdf_percentiles[["cont_ws"]][[as.character(perc2)]])),
+    sprintf("%.3f", (cdf_percentiles[["cont_ws"]][[as.character(perc1)]] - cdf_percentiles[["cont_ws"]][[as.character(perc2)]]) - (cdf_percentiles[["tech_comp"]][[as.character(perc1)]] - cdf_percentiles[["tech_comp"]][[as.character(perc2)]])),
+    sprintf("%.3f", (cdf_percentiles[["tech_comp"]][[as.character(perc1)]] - cdf_percentiles[["tech_comp"]][[as.character(perc2)]]) - (t1_percentiles[[as.character(perc1)]] - t1_percentiles[[as.character(perc2)]]))
+  )
+  i <- i + 1
+  
+  df_decompose[i, ] <- list(
+    "pct",
+    100,
+    sprintf("%.1f%%", 100 * ((t2_percentiles[[as.character(perc1)]] - t2_percentiles[[as.character(perc2)]]) - (cdf_percentiles[["tech_ws"]][[as.character(perc1)]] - cdf_percentiles[["tech_ws"]][[as.character(perc2)]])) / t2_t1_diff),
+    sprintf("%.1f%%", 100 * ((cdf_percentiles[["tech_ws"]][[as.character(perc1)]] - cdf_percentiles[["tech_ws"]][[as.character(perc2)]]) - (cdf_percentiles[["cont_ws"]][[as.character(perc1)]] - cdf_percentiles[["cont_ws"]][[as.character(perc2)]])) / t2_t1_diff),
+    sprintf("%.1f%%", 100 * ((cdf_percentiles[["cont_ws"]][[as.character(perc1)]] - cdf_percentiles[["cont_ws"]][[as.character(perc2)]]) - (cdf_percentiles[["tech_comp"]][[as.character(perc1)]] - cdf_percentiles[["tech_comp"]][[as.character(perc2)]])) / t2_t1_diff),
+    sprintf("%.1f%%", 100 * ((cdf_percentiles[["tech_comp"]][[as.character(perc1)]] - cdf_percentiles[["tech_comp"]][[as.character(perc2)]]) - (t1_percentiles[[as.character(perc1)]] - t1_percentiles[[as.character(perc2)]])) / t2_t1_diff)
+  )  
+  i <- i + 1
 }
-names(cont_ws_percentiles) <- percents
 
-# tech_comp
-tech_comp_percentiles <- numeric(length(percents))
-j <- 1
-for (i in 1:length(lwage_thresholds)) {
-  if (df_cdf$cdf_tech_comp[i] > percents[j]) {
-    # intrapolate
-    tech_comp_percentiles[j] <- (df_cdf$cdf_tech_comp[i] - percents[j]) /
-      (df_cdf$cdf_tech_comp[i] - df_cdf$cdf_tech_comp[i - 1]) *
-      (lwage_thresholds[i] - lwage_thresholds[i - 1]) + lwage_thresholds[i - 1]
-    
-    j <- j + 1
-    if (j > length(percents)) {
-      break
-    }
-  }
-}
-names(tech_comp_percentiles) <- percents
-
-
-
-
-
-# 90-10
-df_decompose[3, ] <- list("90-10",
-                          (t2_percentiles[["0.9"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.1"]]),
-                          (t2_percentiles[["0.9"]] - t2_percentiles[["0.1"]]) - (tech_ws_percentiles[["0.9"]] - tech_ws_percentiles[["0.1"]]),
-                          (tech_ws_percentiles[["0.9"]] - tech_ws_percentiles[["0.1"]]) - (cont_ws_percentiles[["0.9"]] - cont_ws_percentiles[["0.1"]]),
-                          (cont_ws_percentiles[["0.9"]] - cont_ws_percentiles[["0.1"]]) - (tech_comp_percentiles[["0.9"]] - tech_comp_percentiles[["0.1"]]),
-                          (tech_comp_percentiles[["0.9"]] - tech_comp_percentiles[["0.1"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.1"]])
-                          )
-
-df_decompose[4, ] <- list("pct",
-                          100,
-                          100 * ((t2_percentiles[["0.9"]] - t2_percentiles[["0.1"]]) - (tech_ws_percentiles[["0.9"]] - tech_ws_percentiles[["0.1"]])) / ((t2_percentiles[["0.9"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.1"]])),
-                          100 * ((tech_ws_percentiles[["0.9"]] - tech_ws_percentiles[["0.1"]]) - (cont_ws_percentiles[["0.9"]] - cont_ws_percentiles[["0.1"]])) / ((t2_percentiles[["0.9"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.1"]])),
-                          100 * ((cont_ws_percentiles[["0.9"]] - cont_ws_percentiles[["0.1"]]) - (tech_comp_percentiles[["0.9"]] - tech_comp_percentiles[["0.1"]])) / ((t2_percentiles[["0.9"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.1"]])),
-                          100 * ((tech_comp_percentiles[["0.9"]] - tech_comp_percentiles[["0.1"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.1"]])) / ((t2_percentiles[["0.9"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.1"]]))
-)
-
-# 50-10
-df_decompose[5, ] <- list("50-10",
-                          (t2_percentiles[["0.5"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.5"]] - t1_percentiles[["0.1"]]),
-                          (t2_percentiles[["0.5"]] - t2_percentiles[["0.1"]]) - (tech_ws_percentiles[["0.5"]] - tech_ws_percentiles[["0.1"]]),
-                          (tech_ws_percentiles[["0.5"]] - tech_ws_percentiles[["0.1"]]) - (cont_ws_percentiles[["0.5"]] - cont_ws_percentiles[["0.1"]]),
-                          (cont_ws_percentiles[["0.5"]] - cont_ws_percentiles[["0.1"]]) - (tech_comp_percentiles[["0.5"]] - tech_comp_percentiles[["0.1"]]),
-                          (tech_comp_percentiles[["0.5"]] - tech_comp_percentiles[["0.1"]]) - (t1_percentiles[["0.5"]] - t1_percentiles[["0.1"]])
-)
-
-df_decompose[6, ] <- list("pct",
-                          100,
-                          100 * ((t2_percentiles[["0.5"]] - t2_percentiles[["0.1"]]) - (tech_ws_percentiles[["0.5"]] - tech_ws_percentiles[["0.1"]])) / ((t2_percentiles[["0.5"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.5"]] - t1_percentiles[["0.1"]])),
-                          100 * ((tech_ws_percentiles[["0.5"]] - tech_ws_percentiles[["0.1"]]) - (cont_ws_percentiles[["0.5"]] - cont_ws_percentiles[["0.1"]])) / ((t2_percentiles[["0.5"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.5"]] - t1_percentiles[["0.1"]])),
-                          100 * ((cont_ws_percentiles[["0.5"]] - cont_ws_percentiles[["0.1"]]) - (tech_comp_percentiles[["0.5"]] - tech_comp_percentiles[["0.1"]])) / ((t2_percentiles[["0.5"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.5"]] - t1_percentiles[["0.1"]])),
-                          100 * ((tech_comp_percentiles[["0.5"]] - tech_comp_percentiles[["0.1"]]) - (t1_percentiles[["0.5"]] - t1_percentiles[["0.1"]])) / ((t2_percentiles[["0.5"]] - t2_percentiles[["0.1"]]) - (t1_percentiles[["0.5"]] - t1_percentiles[["0.1"]]))
-)
-
-# 90-50
-df_decompose[7, ] <- list("90-50",
-                          (t2_percentiles[["0.9"]] - t2_percentiles[["0.5"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.5"]]),
-                          (t2_percentiles[["0.9"]] - t2_percentiles[["0.5"]]) - (tech_ws_percentiles[["0.9"]] - tech_ws_percentiles[["0.5"]]),
-                          (tech_ws_percentiles[["0.9"]] - tech_ws_percentiles[["0.5"]]) - (cont_ws_percentiles[["0.9"]] - cont_ws_percentiles[["0.5"]]),
-                          (cont_ws_percentiles[["0.9"]] - cont_ws_percentiles[["0.5"]]) - (tech_comp_percentiles[["0.9"]] - tech_comp_percentiles[["0.5"]]),
-                          (tech_comp_percentiles[["0.9"]] - tech_comp_percentiles[["0.5"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.5"]])
-)
-
-df_decompose[8, ] <- list("pct",
-                          100,
-                          100 * ((t2_percentiles[["0.9"]] - t2_percentiles[["0.5"]]) - (tech_ws_percentiles[["0.9"]] - tech_ws_percentiles[["0.5"]])) / ((t2_percentiles[["0.9"]] - t2_percentiles[["0.5"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.5"]])),
-                          100 * ((tech_ws_percentiles[["0.9"]] - tech_ws_percentiles[["0.5"]]) - (cont_ws_percentiles[["0.9"]] - cont_ws_percentiles[["0.5"]])) / ((t2_percentiles[["0.9"]] - t2_percentiles[["0.5"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.5"]])),
-                          100 * ((cont_ws_percentiles[["0.9"]] - cont_ws_percentiles[["0.5"]]) - (tech_comp_percentiles[["0.9"]] - tech_comp_percentiles[["0.5"]])) / ((t2_percentiles[["0.9"]] - t2_percentiles[["0.5"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.5"]])),
-                          100 * ((tech_comp_percentiles[["0.9"]] - tech_comp_percentiles[["0.5"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.5"]])) / ((t2_percentiles[["0.9"]] - t2_percentiles[["0.5"]]) - (t1_percentiles[["0.9"]] - t1_percentiles[["0.5"]]))
-)
-
-# 75-25
-df_decompose[9, ] <- list("75-25",
-                          (t2_percentiles[["0.75"]] - t2_percentiles[["0.25"]]) - (t1_percentiles[["0.75"]] - t1_percentiles[["0.25"]]),
-                          (t2_percentiles[["0.75"]] - t2_percentiles[["0.25"]]) - (tech_ws_percentiles[["0.75"]] - tech_ws_percentiles[["0.25"]]),
-                          (tech_ws_percentiles[["0.75"]] - tech_ws_percentiles[["0.25"]]) - (cont_ws_percentiles[["0.75"]] - cont_ws_percentiles[["0.25"]]),
-                          (cont_ws_percentiles[["0.75"]] - cont_ws_percentiles[["0.25"]]) - (tech_comp_percentiles[["0.75"]] - tech_comp_percentiles[["0.25"]]),
-                          (tech_comp_percentiles[["0.75"]] - tech_comp_percentiles[["0.25"]]) - (t1_percentiles[["0.75"]] - t1_percentiles[["0.25"]])
-)
-
-df_decompose[10, ] <- list("pct",
-                          100,
-                          100 * ((t2_percentiles[["0.75"]] - t2_percentiles[["0.25"]]) - (tech_ws_percentiles[["0.75"]] - tech_ws_percentiles[["0.25"]])) / ((t2_percentiles[["0.75"]] - t2_percentiles[["0.25"]]) - (t1_percentiles[["0.75"]] - t1_percentiles[["0.25"]])),
-                          100 * ((tech_ws_percentiles[["0.75"]] - tech_ws_percentiles[["0.25"]]) - (cont_ws_percentiles[["0.75"]] - cont_ws_percentiles[["0.25"]])) / ((t2_percentiles[["0.75"]] - t2_percentiles[["0.25"]]) - (t1_percentiles[["0.75"]] - t1_percentiles[["0.25"]])),
-                          100 * ((cont_ws_percentiles[["0.75"]] - cont_ws_percentiles[["0.25"]]) - (tech_comp_percentiles[["0.75"]] - tech_comp_percentiles[["0.25"]])) / ((t2_percentiles[["0.75"]] - t2_percentiles[["0.25"]]) - (t1_percentiles[["0.75"]] - t1_percentiles[["0.25"]])),
-                          100 * ((tech_comp_percentiles[["0.75"]] - tech_comp_percentiles[["0.25"]]) - (t1_percentiles[["0.75"]] - t1_percentiles[["0.25"]])) / ((t2_percentiles[["0.75"]] - t2_percentiles[["0.25"]]) - (t1_percentiles[["0.75"]] - t1_percentiles[["0.25"]]))
-)
-
-# 95-5
-df_decompose[11, ] <- list("95-5",
-                          (t2_percentiles[["0.95"]] - t2_percentiles[["0.05"]]) - (t1_percentiles[["0.95"]] - t1_percentiles[["0.05"]]),
-                          (t2_percentiles[["0.95"]] - t2_percentiles[["0.05"]]) - (tech_ws_percentiles[["0.95"]] - tech_ws_percentiles[["0.05"]]),
-                          (tech_ws_percentiles[["0.95"]] - tech_ws_percentiles[["0.05"]]) - (cont_ws_percentiles[["0.95"]] - cont_ws_percentiles[["0.05"]]),
-                          (cont_ws_percentiles[["0.95"]] - cont_ws_percentiles[["0.05"]]) - (tech_comp_percentiles[["0.95"]] - tech_comp_percentiles[["0.05"]]),
-                          (tech_comp_percentiles[["0.95"]] - tech_comp_percentiles[["0.05"]]) - (t1_percentiles[["0.95"]] - t1_percentiles[["0.05"]])
-)
-
-df_decompose[12, ] <- list("pct",
-                          100,
-                          100 * ((t2_percentiles[["0.95"]] - t2_percentiles[["0.05"]]) - (tech_ws_percentiles[["0.95"]] - tech_ws_percentiles[["0.05"]])) / ((t2_percentiles[["0.95"]] - t2_percentiles[["0.05"]]) - (t1_percentiles[["0.95"]] - t1_percentiles[["0.05"]])),
-                          100 * ((tech_ws_percentiles[["0.95"]] - tech_ws_percentiles[["0.05"]]) - (cont_ws_percentiles[["0.95"]] - cont_ws_percentiles[["0.05"]])) / ((t2_percentiles[["0.95"]] - t2_percentiles[["0.05"]]) - (t1_percentiles[["0.95"]] - t1_percentiles[["0.05"]])),
-                          100 * ((cont_ws_percentiles[["0.95"]] - cont_ws_percentiles[["0.05"]]) - (tech_comp_percentiles[["0.95"]] - tech_comp_percentiles[["0.05"]])) / ((t2_percentiles[["0.95"]] - t2_percentiles[["0.05"]]) - (t1_percentiles[["0.95"]] - t1_percentiles[["0.05"]])),
-                          100 * ((tech_comp_percentiles[["0.95"]] - tech_comp_percentiles[["0.05"]]) - (t1_percentiles[["0.95"]] - t1_percentiles[["0.05"]])) / ((t2_percentiles[["0.95"]] - t2_percentiles[["0.05"]]) - (t1_percentiles[["0.95"]] - t1_percentiles[["0.05"]]))
-)
 
 View(df_decompose)
 

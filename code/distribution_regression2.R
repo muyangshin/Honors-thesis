@@ -1,6 +1,7 @@
 library(tidyverse)
 # library(Hmisc)  # weighted
 library(survey)  # survey analysis
+library(acid)  # weighted Gini
 
 source("code/tools.R")
 
@@ -51,6 +52,8 @@ df <- df %>%
 
 
 # analysis setup -------------------------------------------------
+
+quantile_interval <- 0.001
 
 # regression specification
 tech <- "high_tech"
@@ -110,7 +113,6 @@ dfw_t <- function(i) {
 }
 
 # set thresholds for lwage
-quantile_interval <- 0.01
 lwage_thresholds <- t(svyquantile(~lwage, dfw, seq(0, 1, by = quantile_interval)))
 
 
@@ -148,21 +150,14 @@ for (i in 1:2) {
 
 # empty data frame to store cdfs
 df_cdf <- data.frame(
-  # year = numeric(length(lwage_thresholds)),
   lwage = numeric(length(lwage_thresholds)),
   cdf_tech_ws = numeric(length(lwage_thresholds)),
   cdf_cont_ws = numeric(length(lwage_thresholds)),
   cdf_tech_comp = numeric(length(lwage_thresholds))
 )
 
-# # year
-# df_cdf$year <- years[2]
-
 # lwage
 df_cdf$lwage <- as.vector(lwage_thresholds)
-
-# cdf of period 1 and 2
-# df_cdf$cdf <- seq(0, 1, by = quantile_interval)
 
 
 # ** cdf_tech_ws --------------------
@@ -181,13 +176,8 @@ df_cdf$cdf_tech_ws <- weighted_colMeans(
   weights(dfw_t2)
   )
 
-# last entry
-if (is.nan(df_cdf$cdf_cont_ws[length(df_cdf$cdf_cont_ws)])) {
-  df_cdf$cdf_cont_ws[length(df_cdf$cdf_cont_ws)] <- 1
-}
 
-
-# *** cdf_cont_ws -------------------------------------------------------------
+# ** cdf_cont_ws -------------------------------------------------------------
 
 coef_matrix <- as.matrix(cbind(df_regs[[1]][, c("cons")], 
                                df_regs[[1]][, tech_full],
@@ -200,11 +190,6 @@ df_cdf$cdf_cont_ws <- weighted_colMeans(
     ),
   weights(dfw_t2)
   )
-
-# last entry
-if (is.nan(df_cdf$cdf_cont_ws[length(df_cdf$cdf_cont_ws)])) {
-  df_cdf$cdf_cont_ws[length(df_cdf$cdf_cont_ws)] <- 1
-}
 
 
 # # ** linear ---------------------------------------------------------------
@@ -258,10 +243,9 @@ temp <- logistic(
 
 df_cdf$cdf_tech_comp <- weighted_colMeans(temp, weights(dfw_t2) * prob_tech / prob_tech_sum)
 
-# last entry
-if (is.nan(df_cdf$cdf_tech_comp[length(df_cdf$cdf_tech_comp)])) {
-  df_cdf$cdf_tech_comp[length(df_cdf$cdf_tech_comp)] <- 1
-}
+# remove nans: happens when prob > 1
+df_cdf <- df_cdf %>%
+  mutate_at(vars(starts_with("cdf_")), funs(replace(., is.nan(.), 1)))
 
 
 # results ------------------------------------------------------
@@ -285,7 +269,7 @@ df_summary <- df %>%
   summarise_all(sum)
 
 # decomposition
-df_decompose <- data.frame(matrix(ncol = 6, nrow = 12))
+df_decompose <- data.frame(matrix(ncol = 6, nrow = 14))
 colnames(df_decompose) <- c("name", "total", "tech_ws", "control_ws", "tech_comp", "control_comp")
 
 
@@ -395,5 +379,64 @@ for (pair in list(c(0.9, 0.1), c(0.5, 0.1), c(0.9, 0.5), c(0.75, 0.25), c(0.95, 
 }
 
 
+# Gini --------------------------------------------------------------------
+
+t1_gini <- weighted.gini(dfw_t1$variables$wage, weights(dfw_t1))[[1]]
+t2_gini <- weighted.gini(dfw_t2$variables$wage, weights(dfw_t2))[[2]]
+
+# for constructed cdfs
+cdf_ginis <- vector("list", length(cdfs))
+names(cdf_ginis) <- cdfs
+
+# compute gini
+for (cdf in cdfs) {
+  d_cdf_vector_name <- paste0("d_cdf_", cdf)
+  
+  avg_vector <- sum(exp(df_cdf$lwage) * df_cdf[, d_cdf_vector_name]) / sum(df_cdf[, d_cdf_vector_name])
+  
+  prev_value <- 0
+  area_under_cdf <- 0
+  avg_sum <- 0
+  for (i in 1:nrow(df_cdf)) {
+    avg_sum <- avg_sum + df_cdf[i, d_cdf_vector_name] * exp(df_cdf[i, "lwage"])
+    area_under_cdf <- area_under_cdf + (prev_value + avg_sum / avg_vector) * df_cdf[i, d_cdf_vector_name] / 2
+    prev_value <- avg_sum / avg_vector
+  }
+  cdf_ginis[[cdf]] <- (1/2 - area_under_cdf) * 2
+}
+
+# write to df
+df_decompose[13, ] <- list("Gini", 
+                          sprintf("%.3f", t2_gini - t1_gini),
+                          sprintf("%.3f", t2_gini - cdf_ginis[["tech_ws"]]),
+                          sprintf("%.3f", cdf_ginis[["tech_ws"]] - cdf_ginis[["cont_ws"]]),
+                          sprintf("%.3f", cdf_ginis[["cont_ws"]] - cdf_ginis[["tech_comp"]]),
+                          sprintf("%.3f", cdf_ginis[["tech_comp"]] - t1_gini)
+)
+
+df_decompose[14, ] <- list("pct", 
+                          100,
+                          sprintf("%.1f%%", 100 * (t2_gini - cdf_ginis[["tech_ws"]]) / (t2_gini - t1_gini)),
+                          sprintf("%.1f%%", 100 * (cdf_ginis[["tech_ws"]] - cdf_ginis[["cont_ws"]]) / (t2_gini - t1_gini)),
+                          sprintf("%.1f%%", 100 * (cdf_ginis[["cont_ws"]] - cdf_ginis[["tech_comp"]]) / (t2_gini - t1_gini)),
+                          sprintf("%.1f%%", 100 * (cdf_ginis[["tech_comp"]] - t1_gini) / (t2_gini - t1_gini))
+)
 View(df_decompose)
 
+# df_test <- data.frame(lwage = as.vector(t(svyquantile(~lwage, dfw_t1, seq(0, 1, 0.001)))),
+#                       cdf = seq(0, 1, 0.001),
+#                       d_cdf = 0.001)
+# 
+# avg_vector <- sum(exp(df_test$lwage) * df_test[, "d_cdf"]) / sum(df_test[, "d_cdf"])
+# 
+# prev_value <- 0
+# area_under_cdf <- 0
+# avg_sum <- 0
+# cdf_sum <- 0
+# for (i in 1:nrow(df_test)) {
+#   avg_sum <- avg_sum + df_test[i, "d_cdf"] * exp(df_test[i, "lwage"])
+#   area_under_cdf <- area_under_cdf + (prev_value + avg_sum / avg_vector) * df_test[i, "d_cdf"] / 2
+#   prev_value <- avg_sum / avg_vector
+# }
+# (1/2 - area_under_cdf) * 2
+# 

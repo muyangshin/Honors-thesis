@@ -3,36 +3,33 @@ library(tidyverse)
 library(stargazer)
 library(cowplot)
 library(Hmisc)  # weighted mean, var
+library(survey)
 
 source("code/tools.R")
 
 
 # Load data ---------------------------------------------------------------
 
-df_aces <- load_df_aces()
+years <- c(1996, 2017)
+
+dfw <- svydesign(~1, data = load_df_org(paste0("YEAR >=", years[1])), weights = ~weight)
+
+dfw_t1 <- subset(dfw, YEAR == years[1])
+dfw_t2 <- subset(dfw, YEAR == years[2])
+dfw_m <- subset(dfw, SEX == 1)
+
+theme_set(theme_cowplot(font_size = 10)) # reduce default font size
 
 
-# 2002 vs 2016 ------------------------------------------------------------
-# cdf
-as.data.frame(wtd.Ecdf(df_t1()$lwage, df_t1()$weight)) %>%
-  mutate(year = years[1]) %>%
-  bind_rows(as.data.frame(wtd.Ecdf(df_t2()$lwage, df_t2()$weight)) %>%
-              mutate(year = years[2])) %>%
-  bind_rows(df_cdf %>% dplyr::select(x = lwage, ecdf = cdf_tech) %>% mutate(year = 0)) %>%
-  mutate(year = factor(year)) %>%
-  ggplot(aes(x, ecdf, color = year)) +
-  geom_line()
 
 
 # CPS summary statistics --------------------------------------------------
-df_aces_summary <- df_aces %>%
+df_org_summary <- dfw$variables %>%
   group_by(YEAR, SEX) %>%
   mutate(
-    min_wage = sprintf("%.3f", log(min_wage * 100 / gdp_def)),
     nonwhite = RACE != "White"
   ) %>%
   summarise(
-    min_wage = first(min_wage),
     lwage = sprintf("%.3f", weighted.mean(lwage, weight)),
     high_tech = sprintf("%.3f", weighted.mean(high_tech, weight)),
     nonwhite = sprintf("%.3f", weighted.mean(nonwhite, weight)),
@@ -43,59 +40,241 @@ df_aces_summary <- df_aces %>%
   ) %>%
   arrange(SEX, YEAR)
 
-stargazer(df_aces_summary %>%
-            select(YEAR, min_wage, lwage, high_tech, nonwhite, schooling, experience, n) %>%
-            setNames(c("Year", "Minimum Real Log Wage", "Real Log Wage", "Tech Worker", "Nonwhite", "Age", "Education", 
+stargazer(df_org_summary %>%
+            filter(SEX == 1) %>%
+            select(YEAR, lwage, high_tech, nonwhite, age, schooling, experience, n) %>%
+            setNames(c("Year", "Real Log Wage", "Tech Worker", "Nonwhite", "Age", "Education", 
                        "Experience", "Number of Observations")),
-          title = "Sample Means from the CPS ACES 2002-2016",
-          label = "tab:tab_aces_summary",
+          title = "Sample Means from the CPS ORG, 1996-2017, Men",
+          label = "tab:tab_org_summary_men",
           type = "latex", summary = FALSE,  rownames = FALSE, header = FALSE,
-          out = "tex/aces_summary.tex"
+          out = "tex/org_summary_men.tex"
+)
+
+stargazer(df_org_summary %>%
+            filter(SEX == 2) %>%
+            select(YEAR, lwage, high_tech, nonwhite, age, schooling, experience, n) %>%
+            setNames(c("Year", "Real Log Wage", "Tech Worker", "Nonwhite", "Age", "Education", 
+                       "Experience", "Number of Observations")),
+          title = "Sample Means from the CPS ORG, 1996-2017, Women",
+          label = "tab:tab_org_summary_women",
+          type = "latex", summary = FALSE,  rownames = FALSE, header = FALSE,
+          out = "tex/org_summary_women.tex"
 )
 
 
-# Measures of Wage Inequality ---------------------------------------------
-df_wage_ineq_over_time <- df_aces %>%
-  # recalculate weights
+# CPS: Measures of Wage Inequality ---------------------------------------------
+
+# * construct measures ------------------------------------------------------
+
+# variance
+df_wage_ineq_over_time_var <- svyby(~lwage, ~YEAR+SEX, dfw, svyvar, estimate.only = T) %>%
+  mutate(sd = sqrt(lwage)) %>%
+  select(YEAR, SEX, sd)
+
+# quantiles
+df_wage_ineq_over_time_quantiles <- svyby(~lwage, ~YEAR+SEX, dfw, svyquantile, keep.var = F,
+                                          quantiles = c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)) %>%
+  setNames(c("YEAR", "SEX", paste0("q", 100 * c(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95))))
+
+# gini
+df_wage_ineq_over_time_gini <- dfw$variables %>%
   group_by(YEAR, SEX) %>%
-  mutate(weight = weight / sum(weight)) %>%
-  ungroup() %>%
-  
-  # measures
-  group_by(YEAR, SEX) %>%
-  summarise(
-    sd = sqrt(wtd.var(lwage, weight)),
-    q5 = wtd.quantile(lwage, weight, probs = c(0.05)),
-    q10 = wtd.quantile(lwage, weight, probs = c(0.1)),
-    q25 = wtd.quantile(lwage, weight, probs = c(0.25)),
-    q50 = wtd.quantile(lwage, weight, probs = c(0.5)),
-    q75 = wtd.quantile(lwage, weight, probs = c(0.75)),
-    q90 = wtd.quantile(lwage, weight, probs = c(0.90)),
-    q95 = wtd.quantile(lwage, weight, probs = c(0.95)),
-    gini = weighted.gini(wage, weight)[[1]]
-  ) %>%
+  summarise(gini = weighted.gini(wage, weight)[[1]])
+
+# merge into one df
+df_wage_ineq_over_time <- df_wage_ineq_over_time_var %>%
+  left_join(df_wage_ineq_over_time_quantiles, by = c("YEAR", "SEX")) %>%
+  left_join(df_wage_ineq_over_time_gini, by = c("YEAR", "SEX")) %>%
   
   # diff btwn percentiles
   mutate(
-    "10-90" = q90 - q10,
-    "10-50" = q50 - q10,
-    "50-90" = q90 - q50,
-    "25-75" = q75 - q25,
-    "5-95" = q95 - q5
+    "d10_90" = q90 - q10,
+    "d10_50" = q50 - q10,
+    "d50_90" = q90 - q50,
+    "d25_75" = q75 - q25,
+    "d5_95" = q95 - q5
   ) %>%
   arrange(YEAR, SEX) %>%
-  dplyr::select(YEAR, sd, "10-90", "10-50", "50-90", "25-75", "5-95", gini)
+  dplyr::select(YEAR, SEX, sd, "d10_90", "d10_50", "d50_90", "d25_75", "d5_95", gini)
+
+# remove intermediary dfs
+rm(df_wage_ineq_over_time_var, df_wage_ineq_over_time_quantiles, df_wage_ineq_over_time_gini)
+
+
+# * write as table --------------------------------------------------------
 
 stargazer(df_wage_ineq_over_time %>%
+            filter(SEX == 1) %>%
+            select(-SEX) %>%
             mutate_at(vars(-YEAR), sprintf, fmt = "%.3f") %>%
-            rename(Year = YEAR, 
-                   "Standard Deviation of Log Wage" = sd,
-                   "Gini Coefficient" = gini),
-          title = "Measures of Wage Inequality",
-          label = "tab:tab_wage_ineq_measures",
+            mutate(YEAR = as.character(YEAR)) %>%
+            setNames(c("Year", "Standard Deviation of Log Wage", 
+                       "90-10", "50-10", "90-50", "75-25", "95-5", "Gini Coefficient")),
+          title = "Measures of Wage Inequality, 1992-2017, Men",
+          label = "tab:tab_wage_ineq_measures_men",
           type = "latex", summary = FALSE,  rownames = FALSE, header = FALSE,
-          out = "tex/wage_ineq_measures.tex"
+          out = "tex/wage_ineq_measures_men.tex"
 )
+
+stargazer(df_wage_ineq_over_time %>%
+            filter(SEX == 2) %>%
+            select(-SEX) %>%
+            mutate_at(vars(-YEAR), sprintf, fmt = "%.3f") %>%
+            mutate(YEAR = as.character(YEAR)) %>%
+            setNames(c("Year", "Standard Deviation of Log Wage", 
+                       "90-10", "50-10", "90-50", "75-25", "95-5", "Gini Coefficient")),
+          title = "Measures of Wage Inequality, 1992-2017, Women",
+          label = "tab:tab_wage_ineq_measures_women",
+          type = "latex", summary = FALSE,  rownames = FALSE, header = FALSE,
+          out = "tex/wage_ineq_measures_women.tex"
+)
+
+
+# * Figure ----------------------------------------------------------------
+
+wanted_vars <- c("sd", "d10_90", "d10_50", "d50_90", "d25_75", "gini")
+wanted_vars_names <- c("Standard Deviation", "90-10", "50-10", "90-50", "75-25", "Gini Coefficient")
+plots <- vector("list", length(wanted_vars))
+
+for (i in 1:length(wanted_vars)) {
+  plots[[i]] <- df_wage_ineq_over_time %>%
+    filter(SEX == 1) %>%
+    ggplot(aes(YEAR)) +
+    geom_line(aes_string(y = wanted_vars[i])) +
+    xlab("") + ylab("") + ggtitle(wanted_vars_names[i]) +
+    scale_x_continuous(limits = c(1996, 2017), breaks = seq(1996, 2017, by = 5)) +
+    theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+
+plot_grid(plotlist = plots, ncol = 2, align = "v")
+ggsave("png/ineq_measures_by_year.png")
+
+
+
+# CPS: Tech vs Non-tech ---------------------------------------------------
+
+# Fraction of tech occupations
+df_fraction_tech <- svyby(~high_tech, ~YEAR+SEX, dfw, svymean, estimate.only = T)
+df_fraction_tech_total <- svyby(~high_tech, ~YEAR, dfw, svymean, estimate.only = T)
+
+# mean wage: tech vs non-tech occupations
+df_mean_tech_nontech <- svyby(~wage, ~high_tech+YEAR+SEX, dfw, svymean, estimate.only = T)
+df_mean_tech_nontech_total <- svyby(~wage, ~high_tech+YEAR, dfw, svymean, estimate.only = T)
+
+# plots
+plot_fraction_tech <- df_fraction_tech %>%
+  bind_rows(df_fraction_tech_total %>%
+              mutate(SEX = -1)) %>%
+  mutate(SEX = factor(SEX, levels = c(-1, 1, 2), labels = c("Both", "Male", "Female"))) %>%
+  ggplot(aes(YEAR, high_tech, color = SEX)) +
+  geom_line() +
+  geom_point(aes(shape = SEX), size = 3) +
+  theme_bw() +
+  xlab("Year") + ylab("") + #ylab("Share of Technology Workers") +
+  ggtitle("Share of Technology Workers") +
+  theme(plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.position = "bottom")
+
+plot_wage_gap_tech_nontech <- df_mean_tech_nontech %>%
+  bind_rows(df_mean_tech_nontech_total %>%
+              mutate(SEX = -1)) %>%
+  mutate(SEX = factor(SEX, levels = c(-1, 1, 2), labels = c("Both", "Male", "Female"))) %>%
+  group_by(YEAR, SEX) %>%
+  summarise(diff = last(wage) - first(wage)) %>%
+  ggplot(aes(YEAR, diff, color = SEX)) +
+  geom_line() +
+  geom_point(aes(shape = SEX), size = 3) +
+  theme_bw() +
+  xlab("Year") + ylab("") + #ylab("Difference in Average Hourly Wage")
+  ggtitle("Difference in Average Hourly Wage") +
+  theme(plot.title = element_text(hjust = 0.5), legend.title = element_blank(), legend.position = "bottom")
+
+plot_grid(plot_fraction_tech, plot_wage_gap_tech_nontech, cols = 2)
+ggsave("png/cps_tech_trend.png", height = 4)  
+
+
+# CPS: by wage group ------------------------------------------------------
+
+# determine wage group
+df_cps_wage_quantiles <- svyby(~lwage, ~YEAR, dfw_m, svyquantile, keep.var = F,
+                               quantiles = c(0.5, 0.9))
+
+df_cps_wage_quantiles2 <- df_cps_wage_quantiles %>%
+  setNames(c("YEAR", "q0.5", "q0.9")) %>%
+  right_join(dfw_m$variables %>% select(YEAR),
+            by = "YEAR")
+
+dfw_m <- update(dfw_m,
+                wage_group = ifelse(lwage <= df_cps_wage_quantiles2$q0.5, "Bottom 50%", 
+                                    ifelse(lwage <= df_cps_wage_quantiles2$q0.9, "Middle 40%", "Top 10%")))
+
+df_cps_wage_group_mean_wage <- svyby(~wage, ~YEAR+wage_group, dfw_m, svymean, estimate.only = T)
+df_cps_wage_group_mean_high_tech <- svyby(~high_tech, ~YEAR+wage_group, dfw_m, svymean, estimate.only = T)
+
+plot_cps_wage_group_mean_wage <- df_cps_wage_group_mean_wage %>%
+  mutate(wage_group = factor(wage_group, levels = c("Top 10%", "Middle 40%", "Bottom 50%"))) %>%
+  ggplot(aes(YEAR, wage, color = wage_group)) +
+  geom_line() +
+  geom_point(aes(shape = wage_group), size = 3) +
+  theme_bw() +
+  xlab("Year") + ylab("") + ggtitle("Average Hourly Wage") +
+  theme(legend.title = element_blank(), legend.position = "bottom", plot.title = element_text(hjust = 0.5))
+
+plot_cps_wage_group_mean_high_tech <- df_cps_wage_group_mean_high_tech %>%
+  mutate(wage_group = factor(wage_group, levels = c("Top 10%", "Middle 40%", "Bottom 50%"))) %>%
+  ggplot(aes(YEAR, high_tech, color = wage_group)) +
+  geom_line() +
+  geom_point(aes(shape = wage_group), size = 3) +
+  theme_bw() +
+  xlab("Year") + ylab("") + ggtitle("Share of Technology Workers") +
+  theme(legend.title = element_blank(), legend.position = "bottom", plot.title = element_text(hjust = 0.5))
+
+plot_grid(plot_cps_wage_group_mean_wage, plot_cps_wage_group_mean_high_tech)
+ggsave("png/cps_wage_group.png", height = 4)
+
+
+# CPS: by tech educ group -------------------------------------------------
+
+dfw_m <- update(dfw_m, 
+                tech_educ_group = ifelse(schooling <= 12, ifelse(high_tech == 1, "HS-Tech", "HS-NonTech"),
+                                         ifelse(high_tech == 1, "College-Tech", "College-NonTech")),
+                is_HS_Tech = ifelse(tech_educ_group == "HS-Tech", 1, 0),
+                is_HS_NonTech = ifelse(tech_educ_group == "HS-NonTech", 1, 0),
+                is_College_Tech = ifelse(tech_educ_group == "College-Tech", 1, 0),
+                is_College_NonTech = ifelse(tech_educ_group == "College-NonTech", 1, 0)
+)
+
+df_cps_tech_educ_group_mean_wage <- svyby(~wage, ~tech_educ_group + YEAR + SEX, dfw_m, svymean, estimate.only = T)
+df_cps_tech_educ_group_fraction <- svyby(~is_HS_Tech + is_HS_NonTech + is_College_Tech + is_College_NonTech,
+                                         ~YEAR + SEX, dfw_m, svymean, estimate.only = T)
+
+plot_cps_tech_educ_group_mean_wage <- df_cps_tech_educ_group_mean_wage %>%
+  mutate(tech_educ_group = factor(tech_educ_group,
+                                  levels = c("College-Tech", "HS-Tech", "College-NonTech", "HS-NonTech"))) %>%
+  ggplot(aes(YEAR, wage, color = tech_educ_group)) +
+  geom_line() +
+  geom_point(aes(shape = tech_educ_group), size = 3) +
+  theme_bw() +
+  xlab("Year") + ylab("") + ggtitle("Average Hourly Wage") +
+  theme(legend.title = element_blank(), legend.position = "bottom", plot.title = element_text(hjust = 0.5)) +
+  guides(color=guide_legend(nrow=2,byrow=TRUE))
+
+plot_cps_tech_educ_group_fraction <- df_cps_tech_educ_group_fraction %>%
+  select(YEAR, is_HS_Tech, is_HS_NonTech, is_College_Tech, is_College_NonTech) %>%
+  gather("name", "value", 2:5) %>%
+  mutate(name = factor(name, levels = c("is_College_Tech", "is_HS_Tech", "is_College_NonTech", "is_HS_NonTech"),
+                       labels = c("College-Tech", "HS-Tech", "College-NonTech", "HS-NonTech"))) %>%
+  ggplot(aes(YEAR, value, color = name)) +
+  geom_line() +
+  geom_point(aes(shape = name), size = 3) +
+  theme_bw() +
+  xlab("Year") + ylab("") + ggtitle("Composition") +
+  theme(legend.title = element_blank(), legend.position = "bottom", plot.title = element_text(hjust = 0.5)) +
+  guides(color=guide_legend(nrow=2,byrow=TRUE))
+
+plot_grid(plot_cps_tech_educ_group_mean_wage, plot_cps_tech_educ_group_fraction, ncol = 2)
+ggsave("png/cps_tech_educ_group.png", height = 4)
 
 
 # List of Tech occupations --------------------------------------------------------
@@ -112,7 +291,7 @@ stargazer(df_tech_occupations %>%
 
 
 
-# List of top/bottom tech industry ------------------------------------------------
+# OES: List of top/bottom tech industry ------------------------------------------------
 
 naics.def.2012 <- read.csv("data/NAICS/naics2012_titles.csv", stringsAsFactors = F, fileEncoding = "UTF-8") %>%
   setNames(c("no", "NAICS", "title")) %>%
@@ -152,28 +331,34 @@ stargazer(df_industry_top_tech_2016 %>% bind_rows(df_industry_bottom_tech_2016),
           out = "tex/top_bottom_tech_ind.tex")
 
 
-# share of tech workers - industry approach -------------------------------
+# QCEW: share of tech workers -------------------------------
 
-stargazer(df_industry %>%
-            group_by(year) %>%
-            mutate(
-              employment_tech = employment * tech,
-              wage_total = wage * employment,
-              wage_total_tech = wage_total * tech
-              ) %>%
-            summarise(
-              employment_share = sprintf("%.2f", sum(employment_tech) / sum(employment)),
-              wage_share = sprintf("%.2f", sum(wage_total_tech) / sum(wage_total))
-              ) %>%
-            setNames(c("Year", "Employment Share", "Wage Share")),
-          title = "Employment and Wage Share of Technology Workers",
-          label = "tab:tab_industry_tech_share",
-          type = "latex", summary = F, rownames = F, header = F,
-          out = "tex/industry_tech_share.tex"
-)
+df_industry %>%
+  group_by(year) %>%
+  mutate(
+    employment_tech = employment * tech,
+    wage_total = wage * employment,
+    wage_total_tech = wage_total * tech
+  ) %>%
+  summarise(
+    employment_share = sum(employment_tech) / sum(employment),
+    wage_share = sum(wage_total_tech) / sum(wage_total)
+  ) %>%
+  setNames(c("Year", "Employment Share", "Wage Share")) %>%
+  gather("name", "value", 2:3) %>%
+  mutate(name = factor(name,
+                       levels(factor(name)) [c(2, 1)])) %>%
+  ggplot(aes(Year, value, color = name)) +
+  geom_line() +
+  geom_point(aes(shape = name), size = 3) +
+  xlab("Year") + ylab("Share") +
+  theme_bw() +
+  theme(legend.title = element_blank(), legend.position = "bottom")
+
+ggsave("png/industry_tech_wage_employment_share.png")
 
 
-# industry: by wage group -------------------------------------------------
+# QCEW: by wage group -------------------------------------------------
 
 # number of sectors in 2016
 num_sectors <- nrow(df_industry %>% filter(year == 2016))
@@ -210,15 +395,15 @@ df_industry_by_year_group_2002_2016 <- df_industry_by_year_group %>%
   ) %>%
   arrange(-row_number())
 
-stargazer(df_industry_by_year_group_2002_2016 %>%
-            mutate(wage.growth = sprintf("%.2f%%", wage.growth * 100),
-                   tech.growth = sprintf("%.2f", tech.growth * 100)
-            ) %>%
-            setNames(c("Wage group", "Wage (%)", "Technology Workers (pp)")),
-          title = "The Growth of Wage and Share of Technology Workers in 2002-2016",
-          label = "tab:tab_industry_trends_by_group",
-          type = "latex", summary = FALSE,  rownames = FALSE, header = FALSE,
-          out = "tex/industry_trends_by_group.tex")
+# stargazer(df_industry_by_year_group_2002_2016 %>%
+#             mutate(wage.growth = sprintf("%.1f%%", wage.growth * 100),
+#                    tech.growth = sprintf("%.3f", tech.growth * 100)
+#             ) %>%
+#             setNames(c("Wage group", "Wage (%)", "Share of Technology Workers (pp)")),
+#           title = "The Growth of Wage and Share of Technology Workers, 2002-2016",
+#           label = "tab:tab_industry_trends_by_group",
+#           type = "latex", summary = FALSE,  rownames = FALSE, header = FALSE,
+#           out = "tex/industry_trends_by_group.tex")
 
 
 # plot
@@ -247,6 +432,110 @@ plot_grid(plot.top.bottom.wage, plot.top.bottom.tech, ncol = 2, align = "v")
 ggsave("png/industry_trends_by_year_group.png", height = 4)
 
 
+# ANALYSIS: decomposition result ------------------------------------------
+
+tech_vars <- c("high_tech", "tech_group", "stem", "stem_related")
+tech_vars_name <- c("High-Tech", "Tech Group", "STEM", "STEM-related")
+
+for (i in 1:length(tech_vars)) {
+  tech <- tech_vars[i]
+  df_decompose <- read.csv(paste0("data_out/analysis/", tech, "_small/df_decompose.csv"), stringsAsFactors = F, fileEncoding = "UTF-8") %>%
+    mutate(
+      name = ifelse(name == "pct", "", name),
+      total = ifelse(total == 100, NA, total)
+    ) %>%
+    setNames(c("Statistic", "Total Change", "Wage Structure: Technology", "Wage Structure: Others", 
+               "Composition: Technology", "Composition: Others"))
+  
+  stargazer(df_decompose,
+            title = paste0("Decomposing Changes in Measures of Wage Dispersion, Using ", tech_vars_name[i], " Occupations"),
+            label = paste0("tab:tab_decompose_", tech),
+            type = "latex", summary = FALSE,  rownames = FALSE, header = FALSE,
+            out = paste0("tex/decompose_", tech, ".tex")
+  )
+}
+
+
+
+# ANALYSIS: figures -------------------------------------------------------
+
+# empirical cdf
+cdf_t1 <- svycdf(~lwage, dfw_t1)
+cdf_t2 <- svycdf(~lwage, dfw_t2)
+
+# load df_cdf
+df_cdf <- read.csv("data_out/analysis/high_tech_small/df_cdf.csv", fileEncoding = "UTF-8") %>%
+  mutate(cdf_t1 = cdf_t1$lwage(lwage),
+         cdf_t2 = cdf_t2$lwage(lwage)) %>%
+  filter(lwage > 0.5, lwage < 5)
+
+plot_analysis_observed <- df_cdf %>%
+  select(lwage, cdf_t1, cdf_t2) %>%
+  gather("name", "value", 2:3) %>%
+  mutate(name = factor(ifelse(name == "cdf_t1", 1996, 2017))) %>%
+  ggplot(aes(lwage, value, color = name)) +
+  geom_line() +
+  theme_bw() +
+  xlab("") + ylab("CDFs") + ggtitle("Observed CDFs") +
+  theme(legend.title = element_blank(),
+        legend.position = c(.95, .05),
+        legend.justification = c("right", "bottom"),
+        legend.box.just = "right",
+        legend.background = element_blank(),
+        legend.box.background = element_rect(colour = "black"),
+        plot.title = element_text(hjust = 0.5)
+)
+
+plot_analysis_diff_t2_t1 <- df_cdf %>%
+  mutate(diff = cdf_t2 - cdf_t1) %>%
+  ggplot(aes(lwage, diff)) +
+  geom_line() +
+  theme_bw() +
+  xlab("") + ylab("") + ggtitle("Observed differences") +
+  scale_y_continuous(limits = c(-0.3, 0.15), breaks = seq(-0.3, 0.15, by = 0.07), expand = c(0, 0)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+plot_analysis_tech_ws <- df_cdf %>%
+  mutate(diff = cdf_t2 - cdf_tech_ws) %>%
+  ggplot(aes(lwage, diff)) +
+  geom_line() +
+  theme_bw() +
+  xlab("") + ylab("") + ggtitle("Wage Structure: Technology") +
+  scale_y_continuous(limits = c(-0.3, 0.15), breaks = seq(-0.3, 0.15, by = 0.07), expand = c(0, 0)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+plot_analysis_cont_ws <- df_cdf %>%
+  mutate(diff = cdf_tech_ws - cdf_cont_ws) %>%
+  ggplot(aes(lwage, diff)) +
+  geom_line() +
+  theme_bw() +
+  xlab("") + ylab("") + ggtitle("Wage Structure: Others") +
+  scale_y_continuous(limits = c(-0.3, 0.15), breaks = seq(-0.3, 0.15, by = 0.07), expand = c(0, 0)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+plot_analysis_tech_comp <- df_cdf %>%
+  mutate(diff = cdf_cont_ws - cdf_tech_comp) %>%
+  ggplot(aes(lwage, diff)) +
+  geom_line() +
+  theme_bw() +
+  xlab("Log real wage") + ylab("") + ggtitle("Composition: Technology") +
+  scale_y_continuous(limits = c(-0.3, 0.15), breaks = seq(-0.3, 0.15, by = 0.07), expand = c(0, 0)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+plot_analysis_cont_comp <- df_cdf %>%
+  mutate(diff = cdf_tech_comp - cdf_t1) %>%
+  ggplot(aes(lwage, diff)) +
+  geom_line() +
+  theme_bw() +
+  xlab("Log real wage") + ylab("") + ggtitle("Composition: Others") +
+  scale_y_continuous(limits = c(-0.3, 0.15), breaks = seq(-0.3, 0.15, by = 0.07), expand = c(0, 0)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+plot_grid(plot_analysis_observed, plot_analysis_diff_t2_t1, plot_analysis_tech_ws, plot_analysis_cont_ws,
+          plot_analysis_tech_comp, plot_analysis_cont_comp,
+          ncol = 2)
+ggsave("png/analysis.png")
+
 
 # miscs -----------------------------------------------------------------
 
@@ -257,53 +546,14 @@ df_cdf_tech_only %>%
   ggplot(aes(lwage, value, color = name)) +
   geom_line()
 
-# mean wage: tech vs non-tech occupations
-df_aces %>%
-  filter(SEX == 1) %>%
-  mutate(college = schooling > 12) %>%
-  group_by(YEAR, college) %>%
-  summarise(mean_lwage = weighted.mean(lwage, weight)) %>%
-  group_by(YEAR) %>%
-  summarise(mean_diff = last(mean_lwage) - first(mean_lwage)) %>%
-  mutate(name = "College/HS") %>%
-  bind_rows(df_aces %>%
-              filter(SEX == 1) %>%
-              mutate(college = schooling > 12) %>%
-              group_by(YEAR, high_tech) %>%
-              summarise(mean_lwage = weighted.mean(lwage, weight)) %>%
-              group_by(YEAR) %>%
-              summarise(mean_diff = last(mean_lwage) - first(mean_lwage)) %>%
-              mutate(name = "Tech/Non-tech")) %>%
-  ggplot(aes(YEAR, mean_diff, color = name)) +
-  geom_line()
 
-# tech gap is mostly from the educated
-df_aces %>%
-  filter(SEX == 1, schooling > 12) %>%
-  group_by(YEAR, high_tech) %>%
-  summarise(mean_lwage = weighted.mean(lwage, weight)) %>%
-  group_by(YEAR) %>%
-  summarise(mean_diff = last(mean_lwage) - first(mean_lwage)) %>%
-  ggplot(aes(YEAR, mean_diff)) +
-  geom_line()
-
-# by tech-educ group
-df_aces %>%
-  filter(SEX == 1) %>%
-  mutate(tech_educ_group = ifelse(schooling <= 12, ifelse(high_tech == 1, "HS-Tech", "HS-NonTech"),
-                                  ifelse(high_tech == 1, "College-Tech", "College-Nontech")),
-         tech_educ_group = factor(tech_educ_group)) %>%
-  group_by(YEAR, tech_educ_group) %>%
-  summarise(mean_wage = weighted.mean(wage, weight)) %>%
-  ggplot(aes(YEAR, mean_wage, color = tech_educ_group)) +
-  geom_line()
 
 # between educated, wage distribution by high_tech
 ggplot(df_t1(), aes(x = lwage, color = high_tech)) + geom_histogram(alpha = .3)
 ggplot(df_t2(), aes(x = lwage, color = high_tech)) + geom_density()
 
 # by wage group
-df_by_wage_group <- df_aces %>%
+df_by_wage_group <- df_org %>%
   group_by(YEAR) %>%
   mutate(rank = rank(lwage),
          n = n()) %>%

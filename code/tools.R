@@ -35,8 +35,137 @@ write_ipums_to_sql <- function(cps_data_file, cps_ddi_file, out, tablename = "cp
   dbDisconnect(db)
 }
 
-# Read CPS March data and construct the main dataset
-load_df_aces <- function(query = NULL) {
+# # Read CPS March data and construct the main dataset
+# load_df_aces <- function(query = NULL) {
+#   # query
+#   if (is.null(query)) {
+#     query <- ""
+#   } else {
+#     query <- paste0(" where ", query)
+#   }
+# 
+#   # Read from SQLite
+#   cps_data <- sqldf(paste0("select * from cps", query), dbname = paste0("data_out/cps_aces.sqlite"))
+# 
+#   # GDP Deflators from https://fred.stlouisfed.org/series/DPCERD3Q086SBEA
+#   gdp_deflator <- read.csv("data/GDPDEF.csv", stringsAsFactors = F) %>%
+#     separate(DATE, c("y", "m", "d")) %>%
+#     filter(m == "01") %>%
+#     column_to_rownames('y')
+# 
+#   # STEM, STEM-related
+#   occ10_tech <- read.csv("data/SOC/occ10_tech.csv", stringsAsFactors = F, fileEncoding = "UTF-8") %>%
+#     rename(OCC10LY = OCC2010)
+# 
+#   # federal minimum wage from https://www.dol.gov/whd/minwage/chart.htm
+#   df_minwage <- read.csv('data/min_wage.csv', stringsAsFactors = F, fileEncoding = "UTF-8")
+# 
+#   df <- cps_data %>%
+#     filter(
+#       # keep age between 16 and 65
+#       AGE %in% 16:65,
+#       
+#       # drop if wage income is 0, missing (9999998), or NIU (9999999)
+#       INCWAGE != 0, INCWAGE != 9999999, INCWAGE != 9999998,
+# 
+#       # keep private workers
+#       CLASSWLY == 22,
+#       
+#       # drop if wages were allocated
+#       QOINCWAGE == 0, (SRCEARN != 1 | QINCLONG == 0)
+#       ) %>%
+# 
+#     # minimum wage: drop if lower than minimum wage
+#     left_join(df_minwage, by = "YEAR") %>%
+#     
+#     mutate(
+#       # nominal wage: yearly wage and salary in come divided by number of hours worked
+#       wage_nominal = INCWAGE / WKSWORK1 / UHRSWORKLY,
+# 
+#       # wage, lwage: inflation-adjusted
+#       gdp_def = gdp_deflator[as.character(YEAR), "GDPDEF"],
+#       wage = wage_nominal * 100 / gdp_def,
+#       lwage = log(wage)
+#       ) %>%
+#     
+#     # weight: cps weight multiplied by number of hours worked
+#     mutate(weight = ASECWT * WKSWORK1 * UHRSWORKLY / 52) %>%
+# 
+#     # schooling
+#     mutate(
+#       schooling = recode(unclass(EDUC),
+#                          `2` = 0,
+#                          `10` = 2,
+#                          `20` = 5.5,
+#                          `30` = 7.5,
+#                          `40` = 9,
+#                          `50` = 10,
+#                          `60` = 11,
+#                          `71` = 11.5,
+#                          `73` = 12,
+#                          `81` = 13,
+#                          `91` = 14,
+#                          `92` = 14,
+#                          `111` = 16,
+#                          `123` = 18,
+#                          `124` = 18,
+#                          `125` = 20
+#                          ),
+#       
+#       # 5 education groups: below_hs, hs, college_some, college, graduate
+#       schooling_group = ifelse(schooling < 12, "below_hs",
+#                                ifelse(schooling == 12, "hs",
+#                                       ifelse(schooling < 16, "college_some", # "college"))),
+#                                              ifelse(schooling == 16, "college", "graduate")))),
+#       college = ifelse(schooling > 12, 1, 0),
+#       # college = factor(college, labels("HS", "College")),
+#       
+#       # experience, quartic
+#       experience = ifelse(AGE - schooling - 5 >= 0, AGE - schooling - 5, 0),
+#       experience_2 = experience^2,
+#       experience_3 = experience^3,
+#       experience_4 = experience^4,
+#       
+#       # 4 experience groups: 0-9, 10-19, 20-29, 30+
+#       experience_group = ifelse(experience < 10, "experience9",
+#                                 ifelse(experience < 20, "experience19",
+#                                        ifelse(experience < 30, "experience29", "experience30"))),
+#       
+#       # 20 education-experience groups
+#       educ_exp_group = paste(schooling_group, experience_group, sep = "_"),
+#       educ_exp_group = factor(educ_exp_group),
+#       
+#       # Race
+#       RACE = recode(unclass(RACE),
+#                     `100` = "White",
+#                     `200` = "Black",
+#                     .default = "Other"
+#                     ),
+#       RACE = factor(RACE),
+#       
+#       # marital status
+#       married = ifelse(MARST == 1, 1, 0),
+#       
+#       # metropolitan area
+#       METAREA = factor(METAREA)
+#       ) %>%
+#     
+#     # additional restriction: wage between $1 and $350 (in 2009 dollar)
+#     filter(wage >= 1, wage <= 350) %>%
+#     
+#     # occupations: stem, stem_related, high_tech, tech_group
+#     left_join(occ10_tech %>% 
+#                 dplyr::select(OCC10LY, stem, stem_related, high_tech, tech_group),
+#               by = "OCC10LY") %>%
+#     mutate_at(vars(stem, stem_related, high_tech, tech_group),
+#               funs(replace(., is.na(.), 0))
+#     )
+# 
+#   return(df)
+# }
+
+# Read CPS ORG data and construct the main dataset
+load_df_org <- function(query = NULL) {
   # query
   if (is.null(query)) {
     query <- ""
@@ -44,55 +173,82 @@ load_df_aces <- function(query = NULL) {
     query <- paste0(" where ", query)
   }
 
-  # Read from SQLite
-  cps_data <- sqldf(paste0("select * from cps", query), dbname = paste0("data_out/cps_aces.sqlite"))
+  cps_data <- sqldf(paste0("select * from cps", query), dbname = paste0("data_out/cps_org.sqlite"))
 
-  # GDP Deflators from https://fred.stlouisfed.org/series/DPCERD3Q086SBEA
+  # GDP Deflators from https://fred.stlouisfed.org/series/GDPDEF
   gdp_deflator <- read.csv("data/GDPDEF.csv", stringsAsFactors = F) %>%
     separate(DATE, c("y", "m", "d")) %>%
     filter(m == "01") %>%
-    column_to_rownames('y')
+    column_to_rownames("y")
 
   # STEM, STEM-related
-  occ10_tech <- read.csv("data/SOC/occ10_tech.csv", stringsAsFactors = F, fileEncoding = "UTF-8") %>%
-    rename(OCC10LY = OCC2010)
+  occ10_tech <- read.csv("data/SOC/occ10_tech.csv", stringsAsFactors = F, fileEncoding = "UTF-8")
 
-  # federal minimum wage from https://www.dol.gov/whd/minwage/chart.htm
-  df_minwage <- read.csv('data/min_wage.csv', stringsAsFactors = F, fileEncoding = "UTF-8")
+  # # minimum wage
+  # df_minwage <- read.csv('data/min_wage.csv', stringsAsFactors = F, fileEncoding = "UTF-8") %>%
+  #   rename(min_wage_nominal = min_wage)
 
   df <- cps_data %>%
+    # limit to full-time workers with non-zero salary income
     filter(
-      # keep age between 16 and 65
       AGE %in% 16:65,
       
-      # drop if wage income is 0, missing (9999998), or NIU (9999999)
-      INCWAGE != 0, INCWAGE != 9999999, INCWAGE != 9999998,
+      # drop if NIU
+      EARNWEEK != 9999.99,
 
-      # keep private workers
-      CLASSWLY == 22,
+      # keep only private workers
+      CLASSWKR == 22,
       
       # drop if wages were allocated
-      QOINCWAGE == 0, (SRCEARN != 1 | QINCLONG == 0)
-      ) %>%
+      QEARNWEE == 0,
+      
+      # drop salaried workers if hours worked is zero or hours vary
+      (!(HOURWAGE %in% c(0, 99.99)) | !(UHRSWORKT %in% c(0, 997)))
+    ) %>%
 
-    # minimum wage: drop if lower than minimum wage
-    left_join(df_minwage, by = "YEAR") %>%
+    # # minimum wage: drop if lower than minimum wage
+    # left_join(df_minwage, by = "YEAR") %>%
     
     mutate(
-      # nominal wage: yearly wage and salary in come divided by number of hours worked
-      wage_nominal = INCWAGE / WKSWORK1 / UHRSWORKLY,
-
-      # wage, lwage: inflation-adjusted
+      # hours worked
+      hours_worked = ifelse(PAIDHOUR == 1, UHRSWORKORG, UHRSWORKT),
+      
+      # weight
+      weight = EARNWT * hours_worked,
+    
+      # nominal wage
+      wage_nominal = ifelse(!(HOURWAGE %in% c(0, 99.99)), 
+                            HOURWAGE, 
+                            ifelse(!(UHRSWORKT %in% c(997, 999)), 
+                                   EARNWEEK / UHRSWORKT, 
+                                   NA)
+                            )
+    ) %>%
+    
+    # drop if nominal wage is 0
+    filter(wage_nominal != 0) %>%
+    
+    mutate(
+      # gdp deflator
       gdp_def = gdp_deflator[as.character(YEAR), "GDPDEF"],
-      wage = wage_nominal * 100 / gdp_def,
-      lwage = log(wage)
-      ) %>%
-    
-    # weight: cps weight multiplied by number of hours worked
-    mutate(weight = ASECWT * WKSWORK1 * UHRSWORKLY / 52) %>%
+      
+      # # minimum wage
+      # min_wage = min_wage_nominal * 100 / gdp_def,
+      # lmin_wage = log(min_wage),
+      # 
+      # # wage_uncensored, lwage_uncensored: not censored to the minimum wage
+      # wage_uncensored = wage_nominal * 100 / gdp_def,
+      # lwage_uncensored = log(wage_uncensored),
+      # 
+      # # wage, lwage: censored to the minimum wage
+      # wage = ifelse(wage_uncensored < min_wage, min_wage, wage_uncensored),
+      # lwage = ifelse(lwage_uncensored < lmin_wage, lmin_wage, lwage_uncensored),
 
-    # schooling
-    mutate(
+      # wage, lwage
+      wage = wage_nominal * 100 / gdp_def,
+      lwage = log(wage),
+      
+      # schooling
       schooling = recode(unclass(EDUC),
                          `2` = 0,
                          `10` = 2,
@@ -110,15 +266,14 @@ load_df_aces <- function(query = NULL) {
                          `123` = 18,
                          `124` = 18,
                          `125` = 20
-                         ),
+      ),
       
       # 5 education groups: below_hs, hs, college_some, college, graduate
       schooling_group = ifelse(schooling < 12, "below_hs",
                                ifelse(schooling == 12, "hs",
-                                      ifelse(schooling < 16, "college_some", # "college"))),
+                                      ifelse(schooling < 16, "college_some",
                                              ifelse(schooling == 16, "college", "graduate")))),
       college = ifelse(schooling > 12, 1, 0),
-      # college = factor(college, labels("HS", "College")),
       
       # experience, quartic
       experience = ifelse(AGE - schooling - 5 >= 0, AGE - schooling - 5, 0),
@@ -140,119 +295,30 @@ load_df_aces <- function(query = NULL) {
                     `100` = "White",
                     `200` = "Black",
                     .default = "Other"
-                    ),
+      ),
       RACE = factor(RACE),
       
       # marital status
       married = ifelse(MARST == 1, 1, 0),
       
       # metropolitan area
-      METAREA = factor(METAREA)
-      ) %>%
-    
-    # additional restriction: wage between $1 and $350 (in 2009 dollar)
-    filter(wage >= 1, wage <= 350) %>%
-    
-    # occupations: stem, stem_related, high_tech, tech_group
-    left_join(occ10_tech %>% 
-                dplyr::select(OCC10LY, stem, stem_related, high_tech, tech_group),
-              by = "OCC10LY") %>%
+      METAREA = factor(METAREA),
+      
+      # union
+      union_covered = UNION %in% c(2, 3),
+      
+      # fulltime
+      fulltime = ifelse(WKSTAT == 11, 1, 0)
+    ) %>%
+
+    # occupations: stem, stem-related
+    left_join(occ10_tech %>% dplyr::select(OCC2010, stem, stem_related, high_tech, tech_group), by = "OCC2010") %>%
     mutate_at(vars(stem, stem_related, high_tech, tech_group),
               funs(replace(., is.na(.), 0))
     )
 
   return(df)
 }
-
-# # Read CPS ORG data and construct the main dataset
-# load_df_org <- function(filename, query = NULL) {
-#   # query
-#   query_default <- " where EARNWT != 0"
-#   if (is.null(query)) {
-#     query <- query_default
-#   } else {
-#     query <- paste0(query_default, " and ", query)
-#   }
-#   
-#   cps_data <- sqldf(paste0("select * from cps", query), dbname = paste0("data_out/", filename, ".sqlite"))
-#   
-#   # GDP Deflators from https://fred.stlouisfed.org/series/GDPDEF
-#   gdp_deflator <- read.csv("data/GDPDEF.csv", stringsAsFactors = F) %>%
-#     separate(DATE, c("y", "m", "d")) %>%
-#     filter(m == "01") %>%
-#     column_to_rownames("y")
-#   
-#   # STEM, STEM-related
-#   occ10_tech <- read.csv("data/SOC/occ10_tech.csv", stringsAsFactors = F, fileEncoding = "UTF-8")
-#   
-#   # minimum wage
-#   df_minwage <- read.csv('data/min_wage.csv', stringsAsFactors = F, fileEncoding = "UTF-8")
-#   
-#   df <- cps_data %>%
-#     # limit to full-time workers with non-zero salary income
-#     filter(
-#       AGE %in% 16:65,
-#       HOURWAGE != 99.99, HOURWAGE > 0, EARNWT != 0, UHRSWORKORG != 999,
-#       
-#       # keep private workers
-#       CLASSWKR == 22
-#     ) %>%
-#     
-#     # minimum wage: drop if lower than minimum wage
-#     left_join(df_minwage, by = "YEAR") %>%
-#     
-#     # weight
-#     mutate(weight = EARNWT * UHRSWORKORG) %>%
-#     group_by(YEAR) %>%
-#     mutate(weight = weight / sum(weight)) %>%
-#     ungroup() %>%
-#     
-#     # wage, lwage: inflation-adjusted
-#     mutate(
-#       wage = HOURWAGE * 100 / gdp_deflator[as.character(YEAR), "GDPDEF"],
-#       lwage = log(wage)
-#     ) %>%
-#     
-#     # schooling
-#     mutate(
-#       schooling = recode(unclass(EDUC),
-#                          `2` = 0,
-#                          `10` = 2,
-#                          `20` = 5.5,
-#                          `30` = 7.5,
-#                          `40` = 9,
-#                          `50` = 10,
-#                          `60` = 11,
-#                          `71` = 11.5,
-#                          `73` = 12,
-#                          `81` = 13,
-#                          `91` = 14,
-#                          `92` = 14,
-#                          `111` = 16,
-#                          `123` = 18,
-#                          `124` = 18,
-#                          `125` = 20
-#       ),
-#       experience = ifelse(AGE - schooling - 5 >= 0, AGE - schooling - 5, 0),
-#       experience_2 = experience^2,
-#       experience_3 = experience^3,
-#       experience_4 = experience^4,
-#       RACE = recode(unclass(RACE),
-#                     `100` = "White",
-#                     `200` = "Black",
-#                     .default = "Other"
-#       ),
-#       RACE = factor(RACE),
-#       married = ifelse(MARST == 1, 1, 0),
-#       METAREA = factor(METAREA),
-#       union_covered = UNION %in% c(2, 3)
-#     ) %>%
-#     
-#     # occupations: stem, stem-related
-#     left_join(occ10_tech %>% dplyr::select(OCC2010, stem, stem_related), by = "OCC2010")
-#   
-#   return(df)
-# }
 
 # create mapping from INDLY to OES industry codes,
 # and calculate economy average and sd using the given set of occupations

@@ -1,5 +1,4 @@
 library(tidyverse)
-# library(Hmisc)  # weighted
 library(survey)  # survey analysis
 library(acid)  # weighted Gini
 
@@ -9,13 +8,13 @@ source("code/tools.R")
 # LOAD DATA ---------------------------------------------------------------
 
 # start year, end year
-years <- c(1992, 2017)
+years <- c(1996, 2017)
 
 # read data from sql
-df <- load_df_aces(paste0("YEAR = ", years[1], " or YEAR = ", years[2]))
+df <- load_df_org(paste0("YEAR = ", years[1], " or YEAR = ", years[2]))
 
-# IND to naics
-df_IND_naics <- prepare_INDLY_conversion_census_to_naics(years, occs_high_tech, cached = T)
+# # IND to naics
+# df_IND_naics <- prepare_INDLY_conversion_census_to_naics(years, occs_high_tech, cached = T)
 
 df <- df %>%
   mutate(cons = 1) %>%
@@ -23,32 +22,32 @@ df <- df %>%
   # restrict to men for now
   filter(SEX == 1)
 
-# list of METAREAs which appears only once
-METAREAs_appearing_once <- df %>% 
-  dplyr::select(YEAR, METAREA) %>% 
-  group_by(METAREA) %>% 
-  summarise(n = n_distinct(YEAR)) %>%
-  filter(n == 1) %>%
-  pull(METAREA)
+# # list of METAREAs which appears only once
+# METAREAs_appearing_once <- df %>% 
+#   dplyr::select(YEAR, METAREA) %>% 
+#   group_by(METAREA) %>% 
+#   summarise(n = n_distinct(YEAR)) %>%
+#   filter(n == 1) %>%
+#   pull(METAREA)
 
-df <- df %>%
-  # if METAREA appears only once, code it as 10000
-  mutate(METAREA = ifelse(METAREA %in% get("METAREAs_appearing_once"), 10000, METAREA))  %>%
-  
-  # reset factor levels
-  mutate(METAREA = factor(METAREA)) %>%
-  
-  # # tech using industry sector
-  # left_join(df_IND_naics, by = c("YEAR", "INDLY")) %>%
-  # filter(!is.na(tech.pct)) %>%
-  
-  filter(
-    # censor those below minimum wage
-    wage_nominal >= min_wage,
-    
-    # college-educated only
-    college == 1
-  )
+# df <- df %>%
+#   # if METAREA appears only once, code it as 10000
+#   mutate(METAREA = ifelse(METAREA %in% get("METAREAs_appearing_once"), 10000, METAREA))  %>%
+#   
+#   # reset factor levels
+#   mutate(METAREA = factor(METAREA)) %>%
+#   
+#   # # tech using industry sector
+#   # left_join(df_IND_naics, by = c("YEAR", "INDLY")) %>%
+#   # filter(!is.na(tech.pct)) %>%
+#   
+#   filter(
+#     # censor those below minimum wage
+#     wage_nominal >= min_wage
+#     
+#     # # college-educated only
+#     # college == 1
+#   )
 
 
 # analysis setup -------------------------------------------------
@@ -56,9 +55,9 @@ df <- df %>%
 quantile_interval <- 0.001
 
 # regression specification
-tech <- "high_tech"
+tech <- "stem_related"
 xs <- c("schooling", "experience", "experience_2", "experience_3", "experience_4", 
-        "married", "RACE", "FULLPART")
+        "union_covered", "married", "RACE", "fulltime", "educ_exp_group")
 
 # vector of tech variable names, including dummy variables
 tech_full <- c()  # exclude first
@@ -144,6 +143,10 @@ for (i in 1:2) {
     df_regs[[i]][j, ] <- c(years[i], threshold, reg$coefficients)
   }
 }
+
+# write to file
+write.csv(df_regs[[1]], paste0("data_out/analysis/", tech, "_small/df_regs_1.csv"), fileEncoding = "UTF-8", row.names = F)
+write.csv(df_regs[[2]], paste0("data_out/analysis/", tech, "_small/df_regs_2.csv"), fileEncoding = "UTF-8", row.names = F)
 
 
 # * Construct distributions ---------------------------------------
@@ -235,20 +238,24 @@ prob_tech_sum <- sum(prob_tech)
 
 covariates <- as.matrix(dfw_t2$variables %>% dplyr::select(cons, !!tech_full, !!xs_full))
 
-temp <- logistic(
-  covariates %*% t(as.matrix(
-    df_regs[[1]][, c("cons", tech_full, xs_full)]
+df_cdf$cdf_tech_comp <- weighted_colMeans(
+  logistic(
+    covariates %*% t(as.matrix(
+      df_regs[[1]][, c("cons", tech_full, xs_full)]
     ))
-  )
-
-df_cdf$cdf_tech_comp <- weighted_colMeans(temp, weights(dfw_t2) * prob_tech / prob_tech_sum)
-
-# remove nans: happens when prob > 1
-df_cdf <- df_cdf %>%
-  mutate_at(vars(starts_with("cdf_")), funs(replace(., is.nan(.), 1)))
+  ),
+  weights(dfw_t2) * prob_tech / prob_tech_sum)
 
 
 # results ------------------------------------------------------
+
+# clean cdfs
+df_cdf <- df_cdf %>%
+  # remove nans: happens when prob > 1
+  mutate_at(vars(starts_with("cdf_")), funs(replace(., is.nan(.), 1))) %>%
+  
+  # cdf should be increasing
+  mutate_at(vars(starts_with("cdf_")), funs(ifelse(is.na(lag(.)), ., ifelse(. < lag(.), lag(.), .))))
 
 # create d_cdf
 df_cdf <- df_cdf %>%
@@ -258,15 +265,13 @@ df_cdf <- df_cdf %>%
     d_cdf_cont_ws = cdf_cont_ws - lag(cdf_cont_ws),
     d_cdf_tech_comp = cdf_tech_comp - lag(cdf_tech_comp)
   ) %>%
+  mutate_at(vars(starts_with("d_cdf")),
+            funs(replace(., . < 0, 0))) %>%
   filter(!is.na(d_cdf_tech_ws))
 
-# summary statistics
-df_summary <- df %>% 
-  filter(YEAR %in% years) %>%
-  group_by(YEAR) %>%
-  dplyr::select(weight, !!tech_full2, !!xs_full) %>%
-  mutate_at(c(tech_full2, xs_full), funs(. * weight)) %>%
-  summarise_all(sum)
+# SKIP running regressions and load saved ones
+tech <- "stem_related"
+df_cdf <- read.csv(paste0("data_out/analysis/", tech, "_small/df_cdf.csv"), stringsAsFactors = F, fileEncoding = "UTF-8")
 
 # decomposition
 df_decompose <- data.frame(matrix(ncol = 6, nrow = 14))
@@ -275,11 +280,8 @@ colnames(df_decompose) <- c("name", "total", "tech_ws", "control_ws", "tech_comp
 
 # * variance ------------------------------------------------------
 
-# t1 and t2's observed mean and sd 
-lwage_t1_mean <- svymean(~lwage, dfw_t1)
+# t1 and t2's observed sd 
 lwage_t1_sd <- sqrt(svyvar(~lwage, dfw_t1))
-
-lwage_t2_mean <- svymean(~lwage, dfw_t2)
 lwage_t2_sd <- sqrt(svyvar(~lwage, dfw_t2))
 
 # tech ws
@@ -423,20 +425,8 @@ df_decompose[14, ] <- list("pct",
 )
 View(df_decompose)
 
-# df_test <- data.frame(lwage = as.vector(t(svyquantile(~lwage, dfw_t1, seq(0, 1, 0.001)))),
-#                       cdf = seq(0, 1, 0.001),
-#                       d_cdf = 0.001)
-# 
-# avg_vector <- sum(exp(df_test$lwage) * df_test[, "d_cdf"]) / sum(df_test[, "d_cdf"])
-# 
-# prev_value <- 0
-# area_under_cdf <- 0
-# avg_sum <- 0
-# cdf_sum <- 0
-# for (i in 1:nrow(df_test)) {
-#   avg_sum <- avg_sum + df_test[i, "d_cdf"] * exp(df_test[i, "lwage"])
-#   area_under_cdf <- area_under_cdf + (prev_value + avg_sum / avg_vector) * df_test[i, "d_cdf"] / 2
-#   prev_value <- avg_sum / avg_vector
-# }
-# (1/2 - area_under_cdf) * 2
-# 
+
+# write to file -----------------------------------------------------------
+
+write.csv(df_cdf, paste0("data_out/analysis/", tech, "_small/df_cdf.csv"), fileEncoding = "UTF-8", row.names = F)
+write.csv(df_decompose, paste0("data_out/analysis/", tech, "_small/df_decompose.csv"), fileEncoding = "UTF-8", row.names = F)
